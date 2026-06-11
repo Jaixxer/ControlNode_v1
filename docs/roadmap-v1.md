@@ -10,23 +10,25 @@
 
 ```
 controlplane/
-├── cmd/
-│   ├── cp/                — daemon entrypoint
-│   └── ctl/               — CLI client entrypoint
-├── agent/
+├── cp/
+│   ├── cmd/
+│   │   ├── daemon/        — daemon entrypoint
+│   │   └── ctl/           — CLI client entrypoint
+│   └── internal/
+│       └── db/            — SQLite layer (daemon only)
+├── worker/
 │   └── cmd/               — worker agent entrypoint (separate machine)
-├── internal/
-│   ├── config/            — config loading (shared by all binaries)
-│   ├── db/                — SQLite layer (daemon only)
-│   └── pki/               — CA cert generation + TLS utilities
-├── proto/                 — protobuf definitions + generated Go code
+├── pkg/
+│   ├── config/            — config loading (shared by cp + worker)
+│   ├── pki/               — CA cert generation + TLS utilities
+│   └── proto/             — protobuf definitions + generated Go code
 ├── docs/
 │   └── roadmap-v1.md
 ├── go.mod
 └── Makefile
 ```
 
-The worker agent lives under `agent/` as its own top-level directory because it's a completely separate binary deployed to different machines. The generated gRPC code in `proto/` is the shared contract between daemon and agent.
+Three top-level directories: `cp/` (control plane side — daemon + CLI client), `worker/` (runs on each worker machine), and `pkg/` (shared packages both import). The daemon and worker communicate over gRPC with mTLS; the `pkg/proto/` package is the shared contract.
 
 ---
 
@@ -35,7 +37,7 @@ The worker agent lives under `agent/` as its own top-level directory because it'
 **What to do**
 - Initialize the Go module
 - Create the folder structure above
-- Set up three Cobra root commands: daemon (`cmd/cp`), CLI client (`cmd/ctl`), and worker agent (`agent/cmd`)
+- Set up three Cobra root commands: daemon (`cp/cmd/daemon`), CLI client (`cp/cmd/ctl`), and worker agent (`worker/cmd`)
 - Add a Makefile for build, test, clean
 
 **Checklist**
@@ -103,7 +105,7 @@ The worker agent lives under `agent/` as its own top-level directory because it'
 - Define the proto service: `ControlPlane` with RPCs for Register, Heartbeat, Deploy, ListWorkers, GetWorkerStatus
 - Define messages: RegisterRequest (hostname, labels, cpu_cores, memory_bytes), RegisterResponse, HeartbeatRequest, HeartbeatResponse, DeployRequest, etc.
 - Generate Go code from the proto files (protoc + protoc-gen-go-grpc)
-- The generated code lives in `proto/` and is shared between daemon and agent
+- The generated code lives in `pkg/proto/` and is shared between daemon and agent
 
 **Checklist**
 - `protoc` generates valid Go code without warnings
