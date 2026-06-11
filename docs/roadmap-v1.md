@@ -28,7 +28,18 @@ controlplane/
 └── Makefile
 ```
 
-Three top-level directories: `cp/` (control plane side — daemon + CLI client), `worker/` (runs on each worker machine), and `pkg/` (shared packages both import). The daemon and worker communicate over gRPC with mTLS; the `pkg/proto/` package is the shared contract.
+Three top-level directories: `cp/` (control plane side — daemon + CLI client), `worker/` (runs on each worker machine), and `pkg/` (shared packages both import). The `pkg/proto/` package is the shared contract for all gRPC communication.
+
+## Transport architecture
+
+There are two separate gRPC channels:
+
+| Route | Transport | Auth | Purpose |
+|---|---|---|---|
+| Daemon ↔ Worker | TCP | mTLS | Remote worker nodes on different machines |
+| Daemon ↔ CLI | Unix socket | File permissions | Local client on the same machine |
+
+The daemon listens on both simultaneously. The same protobuf service definition powers both channels — the only difference is the transport layer underneath. This keeps the code simple while matching how each component is actually deployed.
 
 ---
 
@@ -52,7 +63,7 @@ Three top-level directories: `cp/` (control plane side — daemon + CLI client),
 ## Task 2 — Configuration system
 
 **What to do**
-- Define a config struct with distinct sections for each binary (daemon address, database path, cert paths, gRPC port, worker-specific settings like Docker socket path, resource limits)
+- Define a config struct with distinct sections for each binary (daemon address, unix_socket_path, database path, cert paths, gRPC port, worker-specific settings like Docker socket path, resource limits)
 - Load from a YAML file with sensible defaults
 - Allow CLI flags to override specific values
 - Validate required fields on startup
@@ -87,7 +98,7 @@ Three top-level directories: `cp/` (control plane side — daemon + CLI client),
 **What to do**
 - Generate a CA private key and self-signed root certificate
 - Generate a server certificate signed by the CA (for the daemon's gRPC endpoint)
-- Generate a client certificate signed by the CA (for agents and CLI)
+- Generate a client certificate signed by the CA (for workers to authenticate to the daemon via mTLS)
 - Save keys and certs to the filesystem paths configured in the config
 - Add a `cp init-ca` subcommand that bootstraps the PKI
 
@@ -114,19 +125,23 @@ Three top-level directories: `cp/` (control plane side — daemon + CLI client),
 
 ---
 
-## Task 6 — Daemon gRPC server with mTLS
+## Task 6 — Daemon gRPC server with mTLS + Unix socket
 
 **What to do**
-- Configure the daemon to start a gRPC server with TLS using the server certificate
-- Require and verify client certificates signed by the CA
-- Register the ControlPlane service with empty handler stubs
-- Daemon listens on the configured address and port
+- Configure the daemon to start two gRPC listeners:
+  - TCP with mTLS on the configured address and port (for remote workers)
+  - Unix socket at a configured path (for local CLI)
+- TCP listener requires and verifies client certificates signed by the CA
+- Unix socket listener has no TLS (local filesystem permissions control access)
+- Register the ControlPlane service with empty handler stubs on both listeners
 
 **Checklist**
-- Daemon starts a gRPC listener on the configured gRPC port
-- A client with a valid cert connects successfully via gRPC
-- A client without a cert is rejected at the TLS layer
-- A client with a cert signed by a different CA is rejected
+- Daemon starts a TCP gRPC listener on the configured gRPC port
+- Daemon creates the Unix socket at the configured path with restrictive permissions
+- A worker with a valid cert connects successfully via TCP+mTLS
+- A worker without a cert is rejected at the TLS layer
+- A worker with a cert signed by a different CA is rejected
+- The CLI can connect via the Unix socket without TLS
 - The daemon logs accepted and rejected connections
 
 ---
@@ -153,16 +168,15 @@ Three top-level directories: `cp/` (control plane side — daemon + CLI client),
 ## Task 8 — CLI client — query the cluster
 
 **What to do**
-- CLI client opens a gRPC connection to the daemon with its own client cert
+- CLI client connects to the daemon's Unix socket (no TLS)
 - Implement `workers` subcommand: list all registered workers with hostname, status, last heartbeat
 - Implement `worker <id>`: detailed view (labels, resources)
 - Implement `status`: cluster overview (total workers, online/offline)
 
 **Checklist**
-- `ctl workers` shows a table of workers with online/offline status via gRPC
+- `ctl workers` shows a table of workers with online/offline status via gRPC over Unix socket
 - `ctl worker <id>` shows full details for one worker
 - `ctl status` shows cluster summary counts
-- Connection to the daemon uses mTLS with the client certificate
 - Commands degrade gracefully ("daemon not reachable")
 
 ---
