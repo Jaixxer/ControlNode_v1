@@ -45,17 +45,17 @@ Workers never talk to each other (hub-and-spoke). Both transports serve the same
 **What it enables:** A working skeleton to build on. The daemon and agent can load config and block. The CLI can dispatch subcommands.
 
 **Usage surface:**
-- `./daemon -config <path>` — blocks with loaded config printed
-- `./agent -config <path>` — blocks with loaded config printed
+- `./daemon -config <path>` — starts daemon and blocks
+- `./agent -config <path>` — starts agent and blocks
 - `./ctl version` — prints version and exits
 
-**Flow:** This is purely local setup. Each binary starts, reads its config, prints it, and waits. Nothing communicates with anything yet.
+**Flow:** This is purely local setup. Each binary starts, reads its config, validates it loads, then starts logging and blocks. Nothing communicates with anything yet.
 
-**Hint:** Daemon and agent aren't CLI tools — they're long-running processes. Their main() parses `-config` via the `flag` package, loads YAML, prints it, then blocks on `signal.Notify` to wait for SIGINT/SIGTERM. Only `ctl` imports Cobra. The Makefile builds all three with `go build ./...`.
+**Hint:** Daemon and agent aren't CLI tools — they're long-running processes. Their main() parses `-config` via the `flag` package, loads YAML, initialises logging, then blocks on `signal.Notify` to wait for SIGINT/SIGTERM. Only `ctl` imports Cobra. The Makefile builds all three with `go build ./...`.
 
 **Checklist:**
 - `go build ./...` compiles clean
-- Daemon/agent accept `-config` flag and block until killed
+- Daemon/agent accept `-config` flag, start, and block until killed
 - `ctl version` prints a version string and exits
 - Makefile builds all three binaries in one command
 - Only `ctl` imports Cobra
@@ -196,10 +196,12 @@ Workers never talk to each other (hub-and-spoke). Both transports serve the same
 - `ctl workers` — table of all workers: hostname, status, last heartbeat, CPU/memory
 - `ctl worker <id>` — full details including labels and resources
 - `ctl status` — cluster summary: total/online/offline workers
+- `ctl config daemon` — prints the daemon's resolved config (reads daemon config file)
+- `ctl config agent` — prints the agent's resolved config (reads agent config file)
 
-**Flow:** User runs `ctl workers` → `ctl` dials daemon's Unix socket → calls `ListWorkers` gRPC → daemon queries SQLite for all workers → returns structured response → `ctl` formats into aligned table → prints to stdout. `ctl worker <id>` → calls `GetWorker(id)` → daemon fetches single record → returns. `ctl status` → calls `ListWorkers` + `ListDeployments` → computes summary. If daemon is stopped, the Unix socket dial fails → `status.Code()` returns `codes.Unavailable` → `ctl` prints "control plane not reachable" and exits 1.
+**Flow:** User runs `ctl workers` → `ctl` dials daemon's Unix socket → calls `ListWorkers` gRPC → daemon queries SQLite for all workers → returns structured response → `ctl` formats into aligned table → prints to stdout. `ctl worker <id>` → calls `GetWorker(id)` → daemon fetches single record → returns. `ctl status` → calls `ListWorkers` + `ListDeployments` → computes summary. `ctl config daemon` / `ctl config agent` → reads the config file directly (no daemon connection needed), parses it, and prints the resolved config to stdout. If daemon is stopped, the Unix socket dial fails → `status.Code()` returns `codes.Unavailable` → `ctl` prints "control plane not reachable" and exits 1.
 
-**Hint:** All commands use the same gRPC service over a Unix socket dial (`grpc.Dial("unix:///path/to/socket")`). No TLS needed. Table formatting uses Go's `text/tabwriter` for aligned columns. gRPC errors are checked via `status.Code()` to distinguish "unavailable" (daemon offline) from other errors.
+**Hint:** All commands use the same gRPC service over a Unix socket dial (`grpc.Dial("unix:///path/to/socket")`). No TLS needed. Table formatting uses Go's `text/tabwriter` for aligned columns. gRPC errors are checked via `status.Code()` to distinguish "unavailable" (daemon offline) from other errors. The `ctl config` subcommands import the same config package that daemon/agent use — they load and validate the YAML file locally, no RPC call needed.
 
 **Checklist:**
 - `ctl workers` returns aligned table with column headers
