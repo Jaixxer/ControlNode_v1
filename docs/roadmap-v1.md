@@ -2,445 +2,297 @@
 
 **Author:** Jaiveer Singh
 **Language:** Go
-**Note:** You're learning Go as you build this. Workers live on separate machines and communicate with the control plane via gRPC over mTLS. The CLI client talks to the daemon over a local Unix socket. Each task is sized so you can validate it works before moving to the next. No step depends on code you haven't written yet.
 
 ---
 
-## Folder structure
+## Project layout
 
 ```
 controlplane/
 ├── cp/
-│   ├── cmd/
-│   │   ├── daemon/        — daemon entrypoint (flag parsing only)
-│   │   └── ctl/           — CLI client entrypoint (Cobra)
-│   └── internal/
-│       └── db/            — SQLite layer (daemon only)
-├── worker/
-│   └── cmd/               — worker agent entrypoint (flag parsing only)
+│   ├── cmd/daemon/          — daemon entrypoint (flag.FlagSet)
+│   ├── cmd/ctl/             — CLI client entrypoint (Cobra)
+│   └── internal/db/         — SQLite helpers (daemon only)
+├── worker/cmd/              — agent entrypoint (flag.FlagSet)
 ├── pkg/
-│   ├── config/            — config loading (shared by cp + worker)
-│   ├── pki/               — CA cert generation + TLS utilities
-│   └── proto/             — protobuf definitions + generated Go code
+│   ├── config/              — shared config loading
+│   ├── pki/                 — CA + mTLS utilities
+│   └── proto/               — protobuf definitions + generated stubs
 ├── docs/
-│   └── roadmap-v1.md
 ├── go.mod
 └── Makefile
 ```
 
-Single `go.mod` at root. Three top-level directories: `cp/` (control plane — daemon + CLI), `worker/` (runs on each worker machine), and `pkg/` (shared packages both import). The daemon and agent are background services, not CLIs — they parse a `-config` flag and nothing else. Only `ctl` uses Cobra because it has subcommands.
+Single module at root. Daemon and agent are background processes — they parse `-config` and block. The CLI (`ctl`) uses Cobra because it has subcommands.
 
 ---
 
 ## Transport architecture
 
-There are two separate gRPC channels:
-
-| Route | Transport | Auth | Purpose |
+| Route | Transport | Auth | Why |
 |---|---|---|---|
-| Daemon ↔ Worker | TCP | mTLS | Remote worker nodes on different machines |
-| Daemon ↔ CLI | Unix socket | File permissions | Local client on the same machine |
+| Daemon ↔ Worker | TCP | mTLS | Workers are on different machines |
+| Daemon ↔ CLI | Unix socket | File perms | CLI runs on the same machine as the daemon |
 
-The daemon listens on both simultaneously. The same protobuf service definition powers both channels — the only difference is the transport underneath. Workers never communicate with each other; the architecture is hub-and-spoke with the daemon at the centre.
+Workers never talk to each other (hub-and-spoke). Both transports serve the same gRPC service.
 
 ---
 
 ## Task 1 — Project scaffold
 
-**What to do**
-- Initialize the Go module at project root (`go mod init`)
-- Create the directory structure listed above
-- `cp/cmd/daemon/main.go`: parse a `-config` flag, load a minimal YAML config (just `log_level` for now), print the resolved config, then block forever
-- `worker/cmd/main.go`: same pattern as the daemon — `-config` flag, load YAML, print, block
-- `cp/cmd/ctl/main.go`: Cobra root command with a `version` subcommand that prints the binary version and exits. No daemon connection yet.
-- Add a Makefile: build all three binaries, test, clean targets
-- Add a `.gitignore` (ignore binary outputs, `*.db`, cert files)
+**Goal:** Establish the module, directory layout, and entry points for all three binaries so each can be compiled and run independently.
 
-**Topics to explore**
-- `go mod init` and module paths
-- `flag` package for parsing CLI flags (`flag.String`, `flag.Parse`)
-- Cobra library: `cobra.Command`, `cmd.AddCommand`, persistent flags
-- `gopkg.in/yaml.v3` for YAML parsing
-- Go project layout conventions
-- `os.Signal` + `signal.Notify` for graceful blocking
+**What it enables:** You have a working skeleton you can build on. The daemon and agent can load config and block. The CLI can dispatch subcommands.
 
-**Checklist**
-- `go build ./...` compiles without errors
-- `./daemon -config path/to/config.yaml` prints the config and blocks
-- `./agent -config path/to/config.yaml` prints the config and blocks
-- `./ctl version` prints a version string and exits
+**Usage surface:**
+- `./daemon -config <path>` — blocks with loaded config printed
+- `./agent -config <path>` — blocks with loaded config printed
+- `./ctl version` — prints version and exits
+
+**Checklist:**
+- `go build ./...` compiles clean
+- Daemon/agent accept `-config` flag and block
+- `ctl version` prints a version string
 - Makefile builds all three binaries in one command
-- No Cobra dependency in daemon or agent code
+- Only `ctl` imports Cobra
 
 ---
 
 ## Task 2 — SQLite database
 
-**What to do**
-- Add `db_path` to the daemon's config struct
-- On daemon startup, open (or create) a SQLite database at the configured path
-- Run the initial schema: tables for workers, deployments, and certificates
-- Workers table: `id` (text primary key), hostname, labels (text/json), status, last_seen (timestamp)
-- Deployments table: `id` (text primary key), name, worker_id (foreign key), domain, status, created_at
-- Certificates table: `id` (text primary key), type (server/client/ca), cert_pem, expires_at
-- Write helper functions in `cp/internal/db/`: InsertWorker, GetWorker, ListWorkers, InsertDeployment, UpdateDeploymentStatus
-- Schema creation must be idempotent — running it again on an existing DB should not error
-- Verify by inserting a test worker record, reading it back, and confirming persistence across a restart
+**Goal:** Persistent storage for workers, deployments, and certificate metadata so the daemon can track state across restarts.
 
-**Topics to explore**
-- `database/sql` package
-- SQLite driver (modernc.org/sqlite — pure Go, no CGo)
-- SQL `CREATE TABLE IF NOT EXISTS`
-- UUID generation for IDs (`github.com/google/uuid`)
-- Scanning rows into structs (`rows.Scan`)
-- Time handling in Go (`time.Now`, `time.Time` formatting for SQLite)
+**What it enables:** The daemon can store and retrieve worker records, deployment records, and cert metadata. Nothing else in the system works without state persistence.
 
-**Checklist**
-- Database file created at the configured path on first run
-- All three tables exist with correct columns
-- Can insert a worker, read it back by ID, list all workers
-- Data persists after daemon restart
-- Second startup does not error on schema creation
-- Helper functions are usable from other daemon packages
+**Usage surface:**
+- Daemon creates/opens the DB on startup
+- `cp/internal/db/` exposes typed helpers: `InsertWorker`, `GetWorker`, `ListWorkers`, `InsertDeployment`, `UpdateDeploymentStatus`
+
+**Checklist:**
+- DB file created at configured path on first run
+- Workers, deployments, certificates tables exist with correct schema
+- Insert a record, read it back, list all — works
+- Data persists across daemon restart
+- Schema creation is idempotent
 
 ---
 
-## Task 3 — Certificate authority (self-signed)
+## Task 3 — Certificate authority
 
-**What to do**
-- Add these fields to the daemon's config: `ca_cert_path`, `ca_key_path`, `server_cert_path`, `server_key_path`, `client_cert_path`, `client_key_path`, `cert_validity_days` (defaults: CA 10 years, node certs 1 year)
-- Add a `ctl init-ca` subcommand — this is the PKI bootstrap
-- `init-ca` generates:
-  - A private key and self-signed root CA certificate
-  - A server certificate signed by the CA (for the daemon's TCP gRPC listener)
-  - A client certificate signed by the CA (for workers to authenticate to the daemon)
-- Write all certs and keys to the configured file paths with restrictive permissions (0600 for keys)
-- Use ECDSA (P-256) for key generation — faster and smaller than RSA
-- This is a one-time bootstrap: run `ctl init-ca` before starting the daemon for the first time
+**Goal:** Bootstrap a self-signed PKI so the daemon and workers can authenticate each other via mTLS. One-time setup, run before starting anything.
 
-**Topics to explore**
-- `crypto/x509`, `crypto/x509/pkix` for certificate creation
-- `crypto/ecdsa`, `crypto/elliptic` for key generation
-- Certificate structure: subject, validity period, key usage, extended key usage
-- Self-signed CA pattern (IsCA = true, BasicConstraintsValid = true)
-- Server cert vs client cert settings (ExtKeyUsageServerAuth vs ExtKeyUsageClientAuth)
-- `os.FileMode` for file permissions
-- Cobra subcommand with flags (`init-ca --ca-dir ...`)
+**What it enables:** The CA is the root of trust for all mTLS connections. Without it, workers and daemon cannot establish secure communication.
 
-**Checklist**
-- `ctl init-ca` produces six files: CA key, CA cert, server key, server cert, client key, client cert
-- Server cert validates against the CA cert (`openssl verify` or Go's `x509.Certificate.Verify`)
-- Client cert validates against the same CA cert
+**Usage surface:**
+- `ctl init-ca` — generates CA root cert + key, server cert + key (for daemon), client cert + key (for workers)
+- Output files land at configured paths (one-time, keys get 0600 perms)
+
+**Checklist:**
+- Six files produced: CA key, CA cert, server key, server cert, client key, client cert
+- Server cert validates against CA cert
+- Client cert validates against same CA cert
 - Key files have 0600 permissions
-- Running `init-ca` twice overwrites existing files cleanly
-- CA cert has 10-year validity, node certs have 1-year
+- CA valid for 10 years, node certs for 1
 
 ---
 
 ## Task 4 — Protobuf definitions
 
-**What to do**
-- Create `pkg/proto/controlplane.proto` with the `ControlPlane` gRPC service
-- Define the following RPCs (all unary — single request, single response):
-  - `Register(RegisterRequest) returns (RegisterResponse)` — worker announces itself
-  - `Heartbeat(HeartbeatRequest) returns (HeartbeatResponse)` — worker reports it's alive
-  - `Deploy(DeployRequest) returns (DeployResponse)` — deploy an artifact to a worker
-  - `ListWorkers(ListWorkersRequest) returns (ListWorkersResponse)` — query registered workers
-  - `GetWorker(GetWorkerRequest) returns (GetWorkerResponse)` — get details of one worker
-  - `ListContainers(ListContainersRequest) returns (ListContainersResponse)` — query containers on a worker
-  - `ListDeployments(ListDeploymentsRequest) returns (ListDeploymentsResponse)` — list all deployments
-- Define messages with these fields:
-  - Worker info: id, hostname, labels map, cpu_cores (int32), memory_bytes (int64), status, last_seen
-  - Container info: id, name, image, status, ports
-  - Deploy info: id, name, worker_id, domain, status, created_at
-  - DeployRequest: name, artifact bytes, dockerfile contents
-  - Artifact transfer: chunk data for the zip file
-- Run `protoc` with `protoc-gen-go` and `protoc-gen-go-grpc` to generate Go code into `pkg/proto/`
-- The generated code is the single source of truth — both daemon and agent import `pkg/proto/`
-- Add a `go generate` directive or a Makefile target so regeneration is one command
+**Goal:** Define the contract between daemon and all connected clients (workers + CLI) so both sides speak the same protocol.
 
-**Topics to explore**
-- Protocol Buffers syntax (proto3): `message`, `repeated`, `map`, scalar types
-- gRPC service definition: `rpc` declarations, return types
-- `protoc` compiler, `protoc-gen-go`, `protoc-gen-go-grpc` plugins
-- Go package naming in proto files (`option go_package`)
-- `go generate` comment directives
-- Best practices for proto package layout
+**What it enables:** All gRPC communication uses these types. The proto file is the single source of truth — generated Go code in `pkg/proto/` is shared by daemon, agent, and CLI.
 
-**Checklist**
-- `protoc --go_out=. --go-grpc_out=. pkg/proto/controlplane.proto` generates `.pb.go` and `_grpc.pb.go` files
-- Generated code compiles when imported by both daemon and agent packages
-- Proto fields cover all data needed for the listed RPCs
-- Makefile has a `gen-proto` target
+**Usage surface:**
+- `ControlPlane` gRPC service with these RPCs:
+  - `Register(RegisterRequest) → RegisterResponse`
+  - `Heartbeat(HeartbeatRequest) → HeartbeatResponse`
+  - `Deploy(DeployRequest) → DeployResponse`
+  - `ListWorkers(ListWorkersRequest) → ListWorkersResponse`
+  - `GetWorker(GetWorkerRequest) → GetWorkerResponse`
+  - `ListContainers(ListContainersRequest) → ListContainersResponse`
+  - `ListDeployments(ListDeploymentsRequest) → ListDeploymentsResponse`
+- All RPCs are unary request → response
+
+**Checklist:**
+- `protoc` generates `.pb.go` and `_grpc.pb.go` without warnings
+- Generated code compiles when imported by both daemon and agent
+- Makefile has a `gen-proto` target that regenerates from the `.proto` file
 
 ---
 
 ## Task 5 — Daemon gRPC server (dual transport)
 
-**What to do**
-- Add these fields to the daemon's config: `grpc_port`, `unix_socket_path`, `tls_cert_file`, `tls_key_file`, `ca_cert_file`
-- On startup, the daemon creates two gRPC listeners:
-  1. **TCP with mTLS**: loads the server cert + key, configures TLS to require and verify client certificates signed by the CA. Listens on `0.0.0.0:<grpc_port>`.
-  2. **Unix socket**: no TLS, just a raw Unix socket at the configured path with restrictive permissions (only the daemon user can read/write). Listens on `unix:<unix_socket_path>`.
-- Register the `ControlPlane` gRPC service with empty handler stubs (each RPC returns an unimplemented error or a placeholder response)
-- Log when each listener starts, when a connection is accepted, and when a connection is rejected (TLS failure)
-- Handle graceful shutdown: on SIGINT/SIGTERM, stop both listeners and wait for in-flight RPCs to finish
-- Test with a simple gRPC client that connects via TCP+mTLS (valid cert = success, no cert = reject, wrong CA cert = reject) and via Unix socket (no TLS, just connect)
+**Goal:** The daemon listens for gRPC connections on two channels — TCP with mTLS for remote workers, Unix socket for local CLI.
 
-**Topics to explore**
-- `crypto/tls` package: `tls.Config`, `ClientAuth = tls.RequireAndVerifyClientCert`, `Certificates` slice, `GetConfigForClient`
-- gRPC `credentials.NewTLS` for server-side TLS
-- gRPC `Server` with multiple listeners (`grpc.Serve` on separate `net.Listener`s)
-- `net.Listen("tcp", ...)` and `net.Listen("unix", ...)`
-- `os.Remove(socketPath)` before creating Unix socket (clean up stale socket files)
-- `os.Signal`, `signal.Notify` for graceful shutdown
-- Graceful stop: `grpcServer.GracefulStop()`
+**What it enables:** Workers and CLI can both reach the daemon. mTLS ensures only authenticated workers connect. The Unix socket gives the CLI fast local access without TLS overhead.
 
-**Checklist**
-- Daemon starts both listeners on startup (TCP on the configured port, Unix socket at the configured path)
-- Worker (simulated) connects via TCP+mTLS with a valid client cert — connection accepted
-- Worker connects without a client cert — rejected at TLS layer
-- Worker connects with a cert signed by a different CA — rejected
-- CLI (simulated) connects via Unix socket — no TLS, just connects
-- Unix socket file has restrictive permissions (0700 or 0600)
-- Graceful shutdown stops both listeners without errors
+**Usage surface:**
+- Daemon starts both listeners on startup
+- TCP listener: `0.0.0.0:<grpc_port>`, TLS with required client cert
+- Unix socket: `<unix_socket_path>`, restrictive perms, no TLS
+- All RPCs return unimplemented stubs at this stage
+
+**Checklist:**
+- TCP listener binds and accepts valid mTLS connections
+- Clients without certs or with wrong-CA certs are rejected at TLS layer
+- Unix socket is created with restrictive permissions
+- CLI connects via Unix socket without TLS
+- SIGINT/SIGTERM triggers graceful shutdown of both listeners
 - Connection attempts are logged
 
 ---
 
-## Task 6 — Worker agent registration and heartbeat
+## Task 6 — Worker agent registration + heartbeat
 
-**What to do**
-- Add these fields to the agent's config: `daemon_address` (host:port), `client_cert_file`, `client_key_file`, `ca_cert_file`, `heartbeat_interval_seconds`
-- On startup, the agent:
-  1. Loads its config, reads the client cert + key and CA cert
-  2. Opens a gRPC connection to the daemon over TCP with mTLS
-  3. Calls the `Register` RPC with hostname, labels (e.g. `region=home`), CPU cores, total memory in bytes
-- On the daemon side, the `Register` handler inserts or updates the worker record in SQLite (upsert by worker ID)
-- After registration, the agent starts a heartbeat loop in a separate goroutine: every N seconds, it calls `Heartbeat` RPC
-- On the daemon side, the `Heartbeat` handler updates `last_seen` for that worker
-- If the gRPC connection drops (daemon restart, network glitch), the agent reconnects with exponential backoff (1s, 2s, 4s, 8s... up to a max)
-- On daemon restart, the agent detects disconnection, reconnects, and re-registers
-- On agent restart, it re-registers immediately
-- Daemon should mark workers as "offline" if no heartbeat is received within a configurable timeout (e.g. 3x the heartbeat interval)
+**Goal:** Workers connect to the daemon, identify themselves, and prove they're alive on a schedule. The daemon tracks which workers are available.
 
-**Topics to explore**
-- gRPC client dial options: `grpc.WithTransportCredentials`, `grpc.WithBlock`
-- `credentials.NewTLS` for client-side mTLS (load client cert + CA cert)
-- Goroutines and `time.Ticker` for periodic tasks
-- Exponential backoff pattern (simple loop with `time.Sleep`)
-- `context.Context` with cancellation for goroutine lifecycle
-- SQL upsert (`INSERT ... ON CONFLICT DO UPDATE`)
-- gRPC status codes for error propagation
-- `sync.RWMutex` for safe access to in-memory worker state
+**What it enables:** The daemon has a real-time view of the cluster — which workers are online, their resources, and when they were last heard from. Workers that stop heartbeating are marked offline.
 
-**Checklist**
-- Agent connects to daemon and appears in the workers table
-- Registration data (hostname, labels, resources) is stored correctly
-- Heartbeat updates `last_seen` in the database (visible by polling the DB)
-- Killing and restarting the daemon → agent reconnects and re-registers automatically
-- Killing and restarting the agent → it re-registers immediately
-- Workers that stop heartbeating are marked "offline" after the configured timeout
-- Agent handles invalid cert / unreachable daemon with a clear error message
+**Usage surface:**
+- Agent starts → connects to daemon via mTLS → calls `Register` → loops `Heartbeat` every N seconds
+- Daemon upserts worker record on `Register`, updates `last_seen` on `Heartbeat`
+- Daemon marks workers offline after 3x heartbeat interval without contact
+- Agent reconnects with exponential backoff on connection loss
+
+**Checklist:**
+- Agent connects and appears in DB with correct hostname, labels, resources
+- Heartbeat updates `last_seen` (verify by querying DB)
+- Daemon restart → agent reconnects and re-registers
+- Agent restart → re-registers immediately
+- Stopping heartbeats → worker marked offline after timeout
 
 ---
 
-## Task 7 — CLI client — cluster queries
+## Task 7 — CLI — cluster queries
 
-**What to do**
-- Add `unix_socket_path` to the CLI client's config
-- `ctl` connects to the daemon's Unix socket via gRPC (no TLS)
-- Implement these Cobra subcommands:
-  - `ctl workers` — list all registered workers in a table: hostname, status (online/offline), last heartbeat, CPU/memory
-  - `ctl worker <id>` — show full details of a single worker including labels and resources
-  - `ctl status` — cluster summary: total workers, online count, offline count, total deployments
-- Output uses aligned columns (`text/tabwriter` or `tablewriter`)
-- Empty states (no workers registered, no deployments) show a clean "no workers found" message, not an error
-- If the daemon is not reachable, print "control plane not reachable" and exit with non-zero code
-- All commands communicate over the same Unix socket using the same protobuf service
+**Goal:** The user can inspect the cluster state without looking at the database directly.
 
-**Topics to explore**
-- gRPC dial with Unix socket: `grpc.Dial("unix:///path/to/socket", ...)`
-- `text/tabwriter` for table-formatted output
-- Cobra subcommands with arguments (`Args: cobra.ExactArgs(1)`)
-- Exit codes (`os.Exit(1)`) for error conditions
-- Error handling: gRPC status codes, `status.Code()` to distinguish "unavailable" from other errors
+**What it enables:** You can check which workers are online, see their resources, and get a cluster health summary — all through `ctl` commands over the Unix socket.
 
-**Checklist**
-- `ctl workers` shows a table with column headers and worker rows
-- `ctl worker <id>` shows full details for a specific worker
-- `ctl worker <id>` with a non-existent ID shows a clear "not found" message
-- `ctl status` shows cluster summary counts
-- All commands return clean "control plane not reachable" when daemon is stopped
-- Output is readable aligned text
+**Usage surface:**
+- `ctl workers` — table of all workers: hostname, status, last heartbeat, CPU/memory
+- `ctl worker <id>` — full details for one worker including labels and resources
+- `ctl status` — cluster summary: total/online/offline workers
+- All commands hit the same gRPC service over the Unix socket
+
+**Checklist:**
+- `ctl workers` returns aligned table with column headers
+- `ctl worker <id>` returns full details; missing ID returns "not found"
+- `ctl status` returns summary counts
+- Daemon offline → `ctl` prints "control plane not reachable" and exits non-zero
+- Empty cluster shows clean "no workers" messages, not errors
 
 ---
 
 ## Task 8 — Docker management on the worker
 
-**What to do**
-- Add `docker_socket_path` to the agent's config (default: `/var/run/docker.sock`)
-- On startup, the agent initializes a bollard Docker client connected to the local Docker daemon
-- The agent can:
-  - List all containers on the host (name, image, status, ports)
-  - Start a container from an image name
-  - Stop a running container by ID or name
-- Implement the `ListContainers` RPC on the agent side: when the daemon calls this RPC, the agent queries Docker and returns the container list
-- The daemon can now call `ListContainers` on any worker to see what's running there
-- Errors: if Docker daemon is unreachable, return a gRPC error with details. If a container isn't found, return a not-found error. If image pull fails, return the error message from Docker.
-- Wire this into `ctl`: `ctl worker <id>` should also show running containers for that worker
+**Goal:** The agent can interact with Docker on its host — list, start, stop containers — and report container state back to the daemon on request.
 
-**Topics to explore**
-- bollard library: `client.NewClientWithOpts`, `ContainerList`, `ContainerStart`, `ContainerStop`
-- Docker socket permissions and `gid` membership for Docker access
-- gRPC error details: `status.Errorf(codes.NotFound, "container not found: %s", id)`
-- Mapping bollard struct types to protobuf message types
-- Graceful handling of Docker daemon downtime
+**What it enables:** The daemon can see what's running on each worker and issue container lifecycle commands. This is the prerequisite for the deploy pipeline.
 
-**Checklist**
-- Agent connects to Docker socket on startup
-- Agent lists containers and returns them when daemon calls `ListContainers`
-- `ctl worker <id>` shows containers running on that worker
-- Agent reports Docker daemon unreachable as a clear error
-- Agent handles container-not-found gracefully (doesn't crash)
+**Usage surface:**
+- Agent connects to local Docker socket via bollard
+- Daemon calls `ListContainers` RPC → agent queries Docker → returns list
+- `ctl worker <id>` also shows containers running on that worker
+
+**Checklist:**
+- Agent lists containers on its host
+- Daemon queries a worker's containers via `ListContainers` RPC
+- Agent reports Docker daemon unreachable as a clear gRPC error
+- Container-not-found errors are handled without crashing
+- `ctl worker <id>` includes container info
 
 ---
 
 ## Task 9 — Deploy pipeline
 
-**What to do**
-- Add `ctl deploy <path>` subcommand: takes a directory path, creates a zip archive on the client side
-- CLI sends the zip artifact to the daemon via the `Deploy` RPC over the Unix socket (the artifact bytes are sent inside the protobuf message)
-- Daemon receives the deploy request, picks a target worker (strategy: first online worker, or random from online workers)
-- Daemon forwards the artifact to the selected worker via the `Deploy` RPC over TCP+mTLS
-- Worker receives the artifact, saves it to a temp directory, extracts the zip
-- Worker expects a `Dockerfile` inside the artifact — builds a Docker image from it (via bollard's `ImageBuild`)
-- Worker starts a container from the built image, mapping an available host port to the container's exposed port
-- Daemon stores a deployment record in SQLite: id, name, worker_id, container_id, assigned domain, status, created_at
-- Daemon returns the deployment ID and target worker hostname to the CLI
-- Add `ctl deployments` subcommand: list all deployments with ID, name, worker, domain, status
+**Goal:** Package an application from the CLI, send it through the daemon to a worker, and have the worker build and run it as a Docker container.
 
-**Topics to explore**
-- `archive/zip` for creating zip archives
-- `io.ReadAll`, `bytes.Buffer` for in-memory artifact transfer
-- bollard `ImageBuildOptions`, `ImageBuild` for building from Dockerfile
-- bollard `ContainerCreate`, `ContainerStart` with port mapping
-- gRPC message size limits (default 4MB — configure with `grpc.MaxRecvMsgSize`)
-- Worker selection strategies as a pluggable interface
-- Port allocation: simple strategy (start at 8000, increment)
+**What it enables:** The core controlPlane workflow — push code from your machine and get it running on a worker. This is the primary function of the entire system.
 
-**Checklist**
-- `ctl deploy ./myapp` creates a zip and sends it to the daemon
-- Daemon selects an online worker and forwards the artifact
-- Worker builds a Docker image from the artifact's Dockerfile
-- Worker starts a container from the built image
-- Deployment record is stored in the daemon's database
-- `ctl deployments` lists all deployments in a table
-- Deploying with all workers offline returns a clear "no available workers" error
+**Usage surface:**
+- `ctl deploy <path>` — packages directory into zip, sends to daemon over Unix socket
+- Daemon selects an online worker, forwards the artifact
+- Worker extracts zip, builds Docker image from embedded Dockerfile, starts container
+- Daemon stores deployment record, returns deployment ID + worker name
+- `ctl deployments` — lists all deployments: id, name, worker, domain, status
+- `ctl undeploy <id>` — stops container, removes Caddy route, updates DB
+
+**Checklist:**
+- `ctl deploy ./myapp` sends artifact through daemon to a worker
+- Worker builds image and starts container
+- Deployment record exists in DB
+- No available workers → clear "no workers online" error
+- `ctl undeploy <id>` stops the container and updates status
 
 ---
 
 ## Task 10 — Caddy reverse proxy
 
-**What to do**
-- Add these fields to the daemon's config: `caddy_api_url`, `caddy_admin_token`, `domain_suffix`
-- On each successful deployment, the daemon creates a Caddy route entry that proxies traffic from `<deployment-name>.<domain-suffix>` to the worker's container IP and port
-- Daemon uses Caddy's admin API (JSON config) to add/update routes — no filesystem Caddyfile manipulation
-- On undeploy (remove a deployment), the daemon removes the corresponding route from Caddy's config
-- Caddy supports hot-reload via its admin API — no restart needed
-- The daemon maintains an in-memory view of all active routes and reconciles it with Caddy on startup (in case Caddy was restarted)
-- Add `ctl undeploy <id>` subcommand: stops the container on the worker, removes the Caddy route, updates the deployment status in DB
-- Verify: HTTP request to the domain reaches the application container, undeploying removes the route cleanly
+**Goal:** Route HTTP traffic from a public domain to the deployed container on the worker. Users access the app by hostname, not by guessing IP:port.
 
-**Topics to explore**
-- Caddy admin API: `POST /config/apps/http/servers/...` for JSON config manipulation
-- `net/http` package for making API requests
-- JSON marshalling/unmarshalling for Caddy's config structure
-- Idempotent config updates (check if route exists before adding)
-- Hot-reload vs restart semantics
-- Domain naming convention for deployments
+**What it enables:** Deployed applications are reachable via `<name>.<domain>`. The daemon manages Caddy's route config automatically — create on deploy, remove on undeploy.
 
-**Checklist**
-- Deploying creates a reachable HTTP route via Caddy
-- `curl http://<deployment>.<domain>` returns the deployed app
-- `ctl undeploy <id>` stops the container and removes the Caddy route
-- Caddy reloads without dropping other live routes
+**Usage surface:**
+- On deploy: daemon adds a Caddy route `<name>.<domain>` → worker container IP:port
+- On undeploy: daemon removes the route
+- Uses Caddy's admin API (JSON config, hot-reload, no restart)
+
+**Checklist:**
+- Deploying creates a reachable HTTP route — `curl <name>.<domain>` returns the app
+- Undeploying removes the route cleanly
+- Caddy reloads without dropping other routes
 - `ctl deployments` shows the domain for each deployment
 
 ---
 
 ## Task 11 — Webhook-triggered deployment
 
-**What to do**
-- Add these fields to the daemon's config: `webhook_port`, `webhook_path`, `webhook_secret`
-- Daemon starts an additional HTTP server on the webhook port with a single endpoint (e.g. `POST <webhook_path>`)
-- Endpoint accepts GitHub push event payloads (and/or Gitea, since both use similar formats)
-- On receiving a valid push event:
-  1. Parse the payload to extract repo clone URL, branch, commit SHA
-  2. Clone the repo to a temp directory on the daemon machine
-  3. Call the same internal deploy logic from Task 9 (package the cloned repo into a zip, select worker, forward artifact)
-- Validate the webhook secret if configured (GitHub sends HMAC-SHA256 signature in the `X-Hub-Signature-256` header)
-- Store the commit SHA and repo URL in the deployment record
-- Invalid webhook payloads (bad JSON, wrong content type) are logged and return 400 — no crash
-- Invalid HMAC returns 401
+**Goal:** Automatically deploy when code is pushed to a Git repository. No manual `ctl deploy` needed.
 
-**Topics to explore**
-- `net/http` server with `http.ServeMux` or a simple handler
-- GitHub webhook payload format (push event JSON)
-- HMAC-SHA256 validation: `crypto/hmac`, `crypto/sha256`
-- `os/exec` or `go-git` library for cloning a repo
-- Temp directories: `os.MkdirTemp`, `os.RemoveAll`
-- Idempotent webhooks: use the `X-GitHub-Delivery` header to deduplicate
+**What it enables:** CI/CD — push to GitHub/Gitea, and the daemon clones, packages, and deploys the repo automatically, identical to a manual deploy.
 
-**Checklist**
-- `curl` with a simulated GitHub push payload triggers a deployment
-- Deployment record includes the commit SHA and repo URL
-- The deployed app matches the pushed code (verify by checking the container)
-- Invalid HMAC returns 401 with no side effects
-- Malformed payload returns 400 and is logged without crashing
-- Secret validation is optional (no secret configured = accept all)
+**Usage surface:**
+- Daemon runs an HTTP server on `<webhook_port>` accepting push event payloads
+- On valid push: clone repo → package → trigger same deploy pipeline as Task 9
+- HMAC-SHA256 webhook secret validation (optional)
+- Deployment record includes commit SHA and repo URL
+
+**Checklist:**
+- Simulated push event triggers a full deploy cycle
+- Deployment record contains commit SHA and repo URL
+- Invalid HMAC → 401, no side effects
+- Malformed payload → 400, logged, no crash
+- Secret validation is optional (skip if not configured)
 
 ---
 
 ## Task 12 — Cloudflare DNS
 
-**What to do**
-- Add these fields to the daemon's config: `cloudflare_api_token`, `cloudflare_zone_id`
-- On each successful deployment, create or update a DNS A record pointing `<deployment-name>.<domain-suffix>` to the CP server's public IP via the Cloudflare API v4
-- On undeploy, remove the corresponding DNS record from Cloudflare
-- Handle idempotency: re-deploying the same app should update the existing DNS record, not create a duplicate
-- Handle rate limits: Cloudflare API rate limits are generous (1200 req/5min), but the code should handle 429 responses gracefully with retry-after
-- Cloudflare API errors are logged but do not crash the daemon — a deploy that succeeds on the worker side but fails on DNS should still report as deployed (just show a DNS warning)
-- The daemon should verify the API token has the necessary permissions (DNS zone edit)
+**Goal:** Automatically create and remove DNS records so each deployment has a working domain without manual DNS configuration.
 
-**Topics to explore**
-- Cloudflare API v4: List DNS Records, Create DNS Record, Update DNS Record, Delete DNS Record
-- `net/http` client with bearer token auth (`Authorization: Bearer <token>`)
-- JSON request/response handling for REST API
-- Rate limit detection: HTTP 429, `Retry-After` header
-- Idempotency keys or lookup-before-create pattern
-- Public IP detection: query a service like `https://api.ipify.org` or read from config
+**What it enables:** Full lifecycle automation — deploy creates the DNS record, undeploy removes it. No manual Cloudflare dashboard interaction.
 
-**Checklist**
+**Usage surface:**
+- On deploy: daemon calls Cloudflare API v4 to create/update A record
+- On undeploy: daemon removes the DNS record
+- Idempotent: re-deploy updates existing record, doesn't duplicate
+
+**Checklist:**
 - Deploying creates a DNS A record in the configured Cloudflare zone
-- The DNS record points to the CP server's public IP
-- Re-deploying the same app updates the existing DNS record (no duplicate)
-- Undeploying removes the DNS record
-- Cloudflare API errors are logged but don't prevent the deploy from completing
-- DNS changes take effect (verify with `dig` or Cloudflare dashboard)
+- Record points to the CP server's public IP
+- Re-deploy updates existing record (no duplicate)
+- Undeploy removes the record
+- Cloudflare API errors are logged but don't crash the daemon
 
 ---
 
-## Out of scope for v1 (future)
+## Out of scope for v1
 
-- Authentication and RBAC (v2)
-- Multi-region workers — workers across different geographic locations with latency-aware routing
-- Container metrics and observability dashboards (CPU/memory graphs, log streaming)
-- Custom container registries (private registry auth, image pull secrets)
-- Rollback support (reverting to a previous deployment version)
-- Secrets management (env vars, secret files for deployed apps)
-- Running `ctl` remotely (it's designed for local use against the Unix socket)
-
----
-
-*This is an ordered execution plan. Complete each task's checklist before starting the next. The sequence is designed so you always have a working, testable system at every step.*
+- Auth/RBAC
+- Multi-region workers (geographic distribution)
+- Metrics and dashboards
+- Private container registries
+- Rollback
+- Secrets management
+- Remote CLI access (CLI is local-only via Unix socket)
