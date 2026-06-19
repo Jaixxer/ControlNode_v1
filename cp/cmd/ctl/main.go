@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -32,11 +34,19 @@ func main() {
 			configPath, err := cmd.Flags().GetString("config")
 			if err != nil {
 				slog.Error("Failed to get config path", "error", err)
+				os.Exit(1)
 			}
 			slog.Info("Config path", "path", configPath)
-			urlAdd := fmt.Sprintf("http://local/run?config=%s", configPath)
+			params := url.Values{}
+			params.Set("config", configPath)
+			urlAdd := GetUrl("/run", params)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, urlAdd.String(), nil)
+			if err != nil {
+				slog.Error("Error creating the request: ", "error", err)
+				os.Exit(1)
+			}
 			client := DaemonClient()
-			resp, err := client.Get(urlAdd)
+			resp, err := client.Do(req)
 			if err != nil {
 				slog.Error("Error running the daemon: ", "error", err)
 				os.Exit(1)
@@ -58,14 +68,20 @@ func main() {
 		os.Exit(1)
 	}
 }
-
+func GetUrl(path string, params url.Values) *url.URL {
+	urlAdd := url.URL{Scheme: "http", Host: "local", Path: path, RawQuery: params.Encode()}
+	return &urlAdd
+}
 func DaemonClient() *http.Client {
+	dialer := &net.Dialer{}
+
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return net.Dial("unix", "/tmp/cplane.sock")
+			return dialer.DialContext(ctx, "unix", "/tmp/cplane.sock")
+
 		},
 	}
-	client := &http.Client{Transport: transport}
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
 	return client
 
 }

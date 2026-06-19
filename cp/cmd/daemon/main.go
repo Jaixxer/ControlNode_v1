@@ -28,6 +28,10 @@ func run(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	configPath := r.URL.Query().Get("config")
+	if configPath == "" {
+		fmt.Fprintln(w, "No config path was passed")
+		return
+	}
 	fmt.Fprintln(w, "Reading the config from path: ", configPath)
 	flusher.Flush()
 	config, err := ParseConfig(configPath)
@@ -36,6 +40,6 @@ func run(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 		return
 	}
-	fmt.Fprintln(w, "Loading config: ", config.Database.Password)
+	fmt.Fprintln(w, "Loading config: ", config)
 	flusher.Flush()
 }
