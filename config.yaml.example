@@ -3,5 +3,6 @@ server:
   port: 8080
 
 database:
+  path: "/home/jaiveer/Desktop/self_hosted_controlplane_bfd/dev.db"
   user: "admin"
   password: "securepassword"

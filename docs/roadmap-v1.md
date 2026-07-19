@@ -139,7 +139,7 @@ docker_socket: /var/run/docker.sock
 
 **Checklist:**
 - `ctl init-ca --config <path>` produces six files at paths from config
-- Server cert validates against CA cert
+- Server cert validates agains  CAting websites like this cert
 - Client cert validates against same CA cert
 - Key files have 0600 permissions
 - CA valid for 10 years, node certs for 1
