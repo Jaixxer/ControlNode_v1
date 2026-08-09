@@ -6,3 +6,10 @@ database:
   path: "/home/jaiveer/Desktop/self_hosted_controlplane_bfd/dev.db"
   user: "admin"
   password: "securepassword"
+pki:
+    pkiRootPath: "/tmp/ctl/"
+    caCertPath: "caCert.crt"
+    caKeyPath: "caKey.key"
+    serverKeyPath: "serverKey.key"
+    serverCertPath: "serverCert.crt"
+    clientCertPath: "/tmp/ctl/client_certs"

@@ -1,9 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	database "jaiveer/ControlPlane/cp/internal/db"
+	"jaiveer/ControlPlane/cp/internal/pki"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// NOTE: Rn, daemon isnt maintaining a state of config in sense its not storing where the config is and as a resutl every restart would mean providing config path again
 func main() {
 	_ = os.RemoveAll("/tmp/cplane.sock")
 	mux := http.NewServeMux()
@@ -69,11 +70,27 @@ func run(w http.ResponseWriter, r *http.Request) {
 	// 	fmt.Fprintln(w, "Error Creating a test worker:", err)
 	// 	flusher.Flush()
 	// }
-	user, err := gorm.G[database.Workers](db).Find(context.Background())
+	// user, err := gorm.G[database.Workers](db).Find(context.Background())
+	// if err != nil {
+	// 	fmt.Fprintln(w, "Error finding the worker: ", err)
+	// 	flusher.Flush()
+	// }
+	// fmt.Fprintf(w, "%+v\n", user)
+	certManager := pki.CertificateManager{}
+	err = certManager.InitCACert(config.Pki.PkiRootPath, config.Pki.CaCertPath, config.Pki.CaKeyPath)
 	if err != nil {
-		fmt.Fprintln(w, "Error finding the worker: ", err)
+		fmt.Fprintln(w, "Error Initialising Ca Certs and Keys hehe", err)
 		flusher.Flush()
 	}
-	fmt.Fprintf(w, "%+v\n", user)
-	flusher.Flush()
+	err = certManager.InitServerCert(config.Pki.PkiRootPath, config.Pki.ServerCertPath, config.Pki.ServerKeyPath)
+	if err != nil {
+		fmt.Fprintln(w, "Error Initialising Server Certs and Keys hehe", err)
+		flusher.Flush()
+	}
+	err = certManager.CreateWorkerKeyCert("workey_1", config.Pki.ClientCertPath)
+	if err != nil {
+		fmt.Fprintln(w, "Error Initialising worker Certs and Keys hehe", err)
+		flusher.Flush()
+
+	}
 }

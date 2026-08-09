@@ -17,6 +17,14 @@ type Config struct {
 		User     string `yaml:"user"`
 		Password string `yaml:"password"`
 	} `yaml:"database"`
+	Pki struct {
+		PkiRootPath    string `yaml:"pkiRootPath"`
+		CaCertPath     string `yaml:"caCertPath"`
+		CaKeyPath      string `yaml:"caKeyPath"`
+		ServerCertPath string `yaml:"serverCertPath"`
+		ServerKeyPath  string `yaml:"serverKeyPath"`
+		ClientCertPath string `yaml:"clientCertPath"`
+	} `yaml:"pki"`
 }
 
 func ParseConfig(path string) (*Config, error) {
