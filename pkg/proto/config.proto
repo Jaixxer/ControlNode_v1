@@ -11,6 +11,19 @@ message EchoRequest{
 message EchoResponse{
     string message=1;
 }
+
 service EchoService{
 rpc Echo(EchoRequest) returns (EchoResponse);
+}
+
+message RegisterWorkerRequest{
+    string name=1;
+     sint32 heartbeat=2;
+}
+message RegisterWorkerResponse{
+    string task=1;
+    bool success=2;
+}
+service RegisterWorker{
+    rpc Register(stream RegisterWorkerRequest) returns (stream RegisterWorkerResponse);
 }

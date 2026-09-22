@@ -5,7 +5,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.0
 // - protoc             v6.30.2
-// source: config.proto
+// source: pkg/proto/config.proto
 
 package pb
 
@@ -120,5 +120,101 @@ var EchoService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "config.proto",
+	Metadata: "pkg/proto/config.proto",
+}
+
+const (
+	RegisterWorker_Register_FullMethodName = "/echo.RegisterWorker/Register"
+)
+
+// RegisterWorkerClient is the client API for RegisterWorker service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type RegisterWorkerClient interface {
+	Register(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RegisterWorkerRequest, RegisterWorkerResponse], error)
+}
+
+type registerWorkerClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRegisterWorkerClient(cc grpc.ClientConnInterface) RegisterWorkerClient {
+	return &registerWorkerClient{cc}
+}
+
+func (c *registerWorkerClient) Register(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RegisterWorkerRequest, RegisterWorkerResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RegisterWorker_ServiceDesc.Streams[0], RegisterWorker_Register_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RegisterWorkerRequest, RegisterWorkerResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RegisterWorker_RegisterClient = grpc.BidiStreamingClient[RegisterWorkerRequest, RegisterWorkerResponse]
+
+// RegisterWorkerServer is the server API for RegisterWorker service.
+// All implementations must embed UnimplementedRegisterWorkerServer
+// for forward compatibility.
+type RegisterWorkerServer interface {
+	Register(grpc.BidiStreamingServer[RegisterWorkerRequest, RegisterWorkerResponse]) error
+	mustEmbedUnimplementedRegisterWorkerServer()
+}
+
+// UnimplementedRegisterWorkerServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRegisterWorkerServer struct{}
+
+func (UnimplementedRegisterWorkerServer) Register(grpc.BidiStreamingServer[RegisterWorkerRequest, RegisterWorkerResponse]) error {
+	return status.Error(codes.Unimplemented, "method Register not implemented")
+}
+func (UnimplementedRegisterWorkerServer) mustEmbedUnimplementedRegisterWorkerServer() {}
+func (UnimplementedRegisterWorkerServer) testEmbeddedByValue()                        {}
+
+// UnsafeRegisterWorkerServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RegisterWorkerServer will
+// result in compilation errors.
+type UnsafeRegisterWorkerServer interface {
+	mustEmbedUnimplementedRegisterWorkerServer()
+}
+
+func RegisterRegisterWorkerServer(s grpc.ServiceRegistrar, srv RegisterWorkerServer) {
+	// If the following call panics, it indicates UnimplementedRegisterWorkerServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RegisterWorker_ServiceDesc, srv)
+}
+
+func _RegisterWorker_Register_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RegisterWorkerServer).Register(&grpc.GenericServerStream[RegisterWorkerRequest, RegisterWorkerResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RegisterWorker_RegisterServer = grpc.BidiStreamingServer[RegisterWorkerRequest, RegisterWorkerResponse]
+
+// RegisterWorker_ServiceDesc is the grpc.ServiceDesc for RegisterWorker service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RegisterWorker_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "echo.RegisterWorker",
+	HandlerType: (*RegisterWorkerServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Register",
+			Handler:       _RegisterWorker_Register_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
+	Metadata: "pkg/proto/config.proto",
 }

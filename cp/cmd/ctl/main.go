@@ -61,7 +61,41 @@ func main() {
 		},
 	}
 	runCmd.Flags().String("config", "none", "Config file path")
+	var addWorkerCmd = &cobra.Command{
+		Use:   "add-worker",
+		Short: "To add worker node",
+		Run: func(cmd *cobra.Command, args []string) {
+			name, err := cmd.Flags().GetString("name")
+			if err != nil {
+				slog.Error("Error parsing the name", "error", err)
+				os.Exit(1)
+			}
+			parms := url.Values{}
+			parms.Set("name", name)
+			urlAdd := GetUrl("/add-worker", parms)
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, urlAdd.String(), nil)
+			if err != nil {
+				slog.Error("Error creating the request: ", "error", err)
+				os.Exit(1)
+			}
+			client := DaemonClient()
+			resp, err := client.Do(req)
+			if err != nil {
+				slog.Error("Error adding the worker ", "error", err)
+				os.Exit(1)
+			}
+			defer resp.Body.Close()
+
+			scanner := bufio.NewScanner(resp.Body)
+			for scanner.Scan() {
+				fmt.Println(scanner.Text())
+			}
+
+		},
+	}
+	addWorkerCmd.Flags().String("name", "", "Worker name")
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(addWorkerCmd)
 	rootCmd.AddCommand(runCmd)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println("Error Occured: ", err)

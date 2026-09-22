@@ -5,7 +5,7 @@
 // versions:
 // 	protoc-gen-go v1.36.10
 // 	protoc        v6.30.2
-// source: config.proto
+// source: pkg/proto/config.proto
 
 package pb
 
@@ -33,7 +33,7 @@ type EchoRequest struct {
 
 func (x *EchoRequest) Reset() {
 	*x = EchoRequest{}
-	mi := &file_config_proto_msgTypes[0]
+	mi := &file_pkg_proto_config_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -45,7 +45,7 @@ func (x *EchoRequest) String() string {
 func (*EchoRequest) ProtoMessage() {}
 
 func (x *EchoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_config_proto_msgTypes[0]
+	mi := &file_pkg_proto_config_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -58,7 +58,7 @@ func (x *EchoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EchoRequest.ProtoReflect.Descriptor instead.
 func (*EchoRequest) Descriptor() ([]byte, []int) {
-	return file_config_proto_rawDescGZIP(), []int{0}
+	return file_pkg_proto_config_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *EchoRequest) GetMessage() string {
@@ -77,7 +77,7 @@ type EchoResponse struct {
 
 func (x *EchoResponse) Reset() {
 	*x = EchoResponse{}
-	mi := &file_config_proto_msgTypes[1]
+	mi := &file_pkg_proto_config_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -89,7 +89,7 @@ func (x *EchoResponse) String() string {
 func (*EchoResponse) ProtoMessage() {}
 
 func (x *EchoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_config_proto_msgTypes[1]
+	mi := &file_pkg_proto_config_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -102,7 +102,7 @@ func (x *EchoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EchoResponse.ProtoReflect.Descriptor instead.
 func (*EchoResponse) Descriptor() ([]byte, []int) {
-	return file_config_proto_rawDescGZIP(), []int{1}
+	return file_pkg_proto_config_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *EchoResponse) GetMessage() string {
@@ -112,65 +112,181 @@ func (x *EchoResponse) GetMessage() string {
 	return ""
 }
 
-var File_config_proto protoreflect.FileDescriptor
+type RegisterWorkerRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Heartbeat     int32                  `protobuf:"zigzag32,2,opt,name=heartbeat,proto3" json:"heartbeat,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
 
-const file_config_proto_rawDesc = "" +
+func (x *RegisterWorkerRequest) Reset() {
+	*x = RegisterWorkerRequest{}
+	mi := &file_pkg_proto_config_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterWorkerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterWorkerRequest) ProtoMessage() {}
+
+func (x *RegisterWorkerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_proto_config_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterWorkerRequest.ProtoReflect.Descriptor instead.
+func (*RegisterWorkerRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_proto_config_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *RegisterWorkerRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RegisterWorkerRequest) GetHeartbeat() int32 {
+	if x != nil {
+		return x.Heartbeat
+	}
+	return 0
+}
+
+type RegisterWorkerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Task          string                 `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	Success       bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterWorkerResponse) Reset() {
+	*x = RegisterWorkerResponse{}
+	mi := &file_pkg_proto_config_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterWorkerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterWorkerResponse) ProtoMessage() {}
+
+func (x *RegisterWorkerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_proto_config_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterWorkerResponse.ProtoReflect.Descriptor instead.
+func (*RegisterWorkerResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_proto_config_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RegisterWorkerResponse) GetTask() string {
+	if x != nil {
+		return x.Task
+	}
+	return ""
+}
+
+func (x *RegisterWorkerResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+var File_pkg_proto_config_proto protoreflect.FileDescriptor
+
+const file_pkg_proto_config_proto_rawDesc = "" +
 	"\n" +
-	"\fconfig.proto\x12\x04echo\"'\n" +
+	"\x16pkg/proto/config.proto\x12\x04echo\"'\n" +
 	"\vEchoRequest\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"(\n" +
 	"\fEchoResponse\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage2<\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\"I\n" +
+	"\x15RegisterWorkerRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
+	"\theartbeat\x18\x02 \x01(\x11R\theartbeat\"F\n" +
+	"\x16RegisterWorkerResponse\x12\x12\n" +
+	"\x04task\x18\x01 \x01(\tR\x04task\x12\x18\n" +
+	"\asuccess\x18\x02 \x01(\bR\asuccess2<\n" +
 	"\vEchoService\x12-\n" +
-	"\x04Echo\x12\x11.echo.EchoRequest\x1a\x12.echo.EchoResponseB\x06Z\x04./pbb\x06proto3"
+	"\x04Echo\x12\x11.echo.EchoRequest\x1a\x12.echo.EchoResponse2[\n" +
+	"\x0eRegisterWorker\x12I\n" +
+	"\bRegister\x12\x1b.echo.RegisterWorkerRequest\x1a\x1c.echo.RegisterWorkerResponse(\x010\x01B\x06Z\x04./pbb\x06proto3"
 
 var (
-	file_config_proto_rawDescOnce sync.Once
-	file_config_proto_rawDescData []byte
+	file_pkg_proto_config_proto_rawDescOnce sync.Once
+	file_pkg_proto_config_proto_rawDescData []byte
 )
 
-func file_config_proto_rawDescGZIP() []byte {
-	file_config_proto_rawDescOnce.Do(func() {
-		file_config_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_config_proto_rawDesc), len(file_config_proto_rawDesc)))
+func file_pkg_proto_config_proto_rawDescGZIP() []byte {
+	file_pkg_proto_config_proto_rawDescOnce.Do(func() {
+		file_pkg_proto_config_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pkg_proto_config_proto_rawDesc), len(file_pkg_proto_config_proto_rawDesc)))
 	})
-	return file_config_proto_rawDescData
+	return file_pkg_proto_config_proto_rawDescData
 }
 
-var file_config_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_config_proto_goTypes = []any{
-	(*EchoRequest)(nil),  // 0: echo.EchoRequest
-	(*EchoResponse)(nil), // 1: echo.EchoResponse
+var file_pkg_proto_config_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_pkg_proto_config_proto_goTypes = []any{
+	(*EchoRequest)(nil),            // 0: echo.EchoRequest
+	(*EchoResponse)(nil),           // 1: echo.EchoResponse
+	(*RegisterWorkerRequest)(nil),  // 2: echo.RegisterWorkerRequest
+	(*RegisterWorkerResponse)(nil), // 3: echo.RegisterWorkerResponse
 }
-var file_config_proto_depIdxs = []int32{
+var file_pkg_proto_config_proto_depIdxs = []int32{
 	0, // 0: echo.EchoService.Echo:input_type -> echo.EchoRequest
-	1, // 1: echo.EchoService.Echo:output_type -> echo.EchoResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: echo.RegisterWorker.Register:input_type -> echo.RegisterWorkerRequest
+	1, // 2: echo.EchoService.Echo:output_type -> echo.EchoResponse
+	3, // 3: echo.RegisterWorker.Register:output_type -> echo.RegisterWorkerResponse
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_config_proto_init() }
-func file_config_proto_init() {
-	if File_config_proto != nil {
+func init() { file_pkg_proto_config_proto_init() }
+func file_pkg_proto_config_proto_init() {
+	if File_pkg_proto_config_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_config_proto_rawDesc), len(file_config_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_proto_config_proto_rawDesc), len(file_pkg_proto_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
-		GoTypes:           file_config_proto_goTypes,
-		DependencyIndexes: file_config_proto_depIdxs,
-		MessageInfos:      file_config_proto_msgTypes,
+		GoTypes:           file_pkg_proto_config_proto_goTypes,
+		DependencyIndexes: file_pkg_proto_config_proto_depIdxs,
+		MessageInfos:      file_pkg_proto_config_proto_msgTypes,
 	}.Build()
-	File_config_proto = out.File
-	file_config_proto_goTypes = nil
-	file_config_proto_depIdxs = nil
+	File_pkg_proto_config_proto = out.File
+	file_pkg_proto_config_proto_goTypes = nil
+	file_pkg_proto_config_proto_depIdxs = nil
 }

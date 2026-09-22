@@ -5,12 +5,15 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"path"
-	"path/filepath"
 	"time"
 )
 
@@ -22,11 +25,17 @@ type CertificateManager struct {
 	serverKey  *rsa.PrivateKey
 	caKey      *rsa.PrivateKey
 }
+type BootStrapToken struct {
+	Name      string `json:"name"`
+	CaDer     []byte `json:"caDer"`
+	WorkerDer []byte `json:"workerDer"`
+	WorkerKey []byte `json:"workerKey"`
+}
 
 func (s *CertificateManager) InitCACert(pkiPath string, certPath string, keyPath string) error {
 	//Checking if the key exists and if so loading it
 	keyBytes, keyErr := os.ReadFile(path.Join(pkiPath, keyPath))
-	certBytes, certErr := os.ReadFile(path.Join(pkiPath + certPath))
+	certBytes, certErr := os.ReadFile(path.Join(pkiPath, certPath))
 	if keyErr == nil && certErr == nil {
 		keyPemBlock, _ := pem.Decode(keyBytes)
 		if keyPemBlock == nil {
@@ -41,6 +50,9 @@ func (s *CertificateManager) InitCACert(pkiPath string, certPath string, keyPath
 		// Certificate Time
 		certPemBlock, _ := pem.Decode(certBytes)
 		caCert, err := x509.ParseCertificate(certPemBlock.Bytes)
+		if err != nil {
+			return err
+		}
 		s.caDer = certPemBlock.Bytes
 		s.caCert = caCert
 		return nil
@@ -62,7 +74,7 @@ func (s *CertificateManager) InitCACert(pkiPath string, certPath string, keyPath
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().AddDate(10, 0, 0),
 		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCRLSign,
+		KeyUsage:              x509.KeyUsageCRLSign | x509.KeyUsageCertSign,
 		SerialNumber:          big.NewInt(time.Now().Unix()),
 		BasicConstraintsValid: true,
 	}
@@ -70,7 +82,9 @@ func (s *CertificateManager) InitCACert(pkiPath string, certPath string, keyPath
 	if err != nil {
 		return err
 	}
-	caCert, err := x509.ParseCertificate(caDer)
+	fmt.Println("CA DER length:", len(caDer))
+	s.caDer = caDer
+	caCert, err := x509.ParseCertificate(s.caDer)
 	if err != nil {
 		return err
 	}
@@ -79,7 +93,6 @@ func (s *CertificateManager) InitCACert(pkiPath string, certPath string, keyPath
 	return nil
 }
 
-// FIX:Not being saved apparently
 func (s *CertificateManager) InitServerCert(pkiPath string, certPath string, keyPath string) error {
 	certBytes, certErr := os.ReadFile(path.Join(pkiPath, certPath))
 	keyBytes, keyErr := os.ReadFile(path.Join(pkiPath, keyPath))
@@ -123,6 +136,8 @@ func (s *CertificateManager) InitServerCert(pkiPath string, certPath string, key
 		NotAfter:     time.Now().AddDate(10, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
 		IsCA:         false,
 		SerialNumber: big.NewInt(time.Now().Unix()),
 	}
@@ -176,10 +191,10 @@ func (s *CertificateManager) saveKey(key *rsa.PrivateKey, path string) error {
 	}
 	return nil
 }
-func (s *CertificateManager) CreateWorkerKeyCert(name string, path string) error {
+func (s *CertificateManager) CreateWorkerKeyCert(name string, path string) (string, error) {
 	clientPriv, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	certTemplate := x509.Certificate{
@@ -203,45 +218,54 @@ func (s *CertificateManager) CreateWorkerKeyCert(name string, path string) error
 		s.caKey,
 	)
 	if err != nil {
-		return err
+		return "", err
 	}
-
-	// Ensure output directory exists.
-	if err := os.MkdirAll(path, 0755); err != nil {
-		return err
+	token := BootStrapToken{
+		Name:      name,
+		CaDer:     s.caDer,
+		WorkerDer: derCert,
+		WorkerKey: x509.MarshalPKCS1PrivateKey(clientPriv),
 	}
-
-	// Save certificate.
-	certFile, err := os.Create(filepath.Join(path, name+".crt"))
-	if err != nil {
-		return err
-	}
-	defer certFile.Close()
-
-	if err := pem.Encode(certFile, &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: derCert,
-	}); err != nil {
-		return err
-	}
-
-	// Save private key.
-	keyFile, err := os.OpenFile(
-		filepath.Join(path, name+".key"),
-		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
-		0600,
-	)
-	if err != nil {
-		return err
-	}
-	defer keyFile.Close()
-
-	if err := pem.Encode(keyFile, &pem.Block{
-		Type:  "PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(clientPriv),
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	marshalToken, err := json.Marshal(token)
+	return base64.StdEncoding.EncodeToString(marshalToken), err
 }
+
+// // Ensure output directory exists.
+// if err := os.MkdirAll(path, 0755); err != nil {
+// 	return err
+// }
+
+// // Save certificate.
+// certFile, err := os.Create(filepath.Join(path, name+".crt"))
+// if err != nil {
+// 	return err
+// }
+// defer certFile.Close()
+
+// if err := pem.Encode(certFile, &pem.Block{
+// 	Type:  "CERTIFICATE",
+// 	Bytes: derCert,
+// }); err != nil {
+// 	return err
+// }
+
+// // Save private key.
+// keyFile, err := os.OpenFile(
+// 	filepath.Join(path, name+".key"),
+// 	os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
+// 	0600,
+// )
+// if err != nil {
+// 	return err
+// }
+// defer keyFile.Close()
+
+// if err := pem.Encode(keyFile, &pem.Block{
+// 	Type:  "PRIVATE KEY",
+// 	Bytes: x509.MarshalPKCS1PrivateKey(clientPriv),
+// }); err != nil {
+// 	return err
+// }
+
+// return nil
+// }
