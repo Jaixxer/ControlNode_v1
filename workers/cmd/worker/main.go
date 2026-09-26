@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
-	workers_pki "jaiveer/ControlPlane/workers/pki"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
+
+	workers_pki "jaiveer/ControlPlane/workers/pki"
 )
 
 func main() {
@@ -42,11 +46,15 @@ func main() {
 
 	slog.Info("Worker credentls initialized")
 
+	// The worker stays attached to the control plane until it is interrupted,
+	// waiting for projects to deploy.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	grpcClient := GrpcClient{}
-	err := grpcClient.InitGrpcClient(*certManager)
-	if err != nil {
-		slog.Error("Error connecting to Grpc server and calling the func: ", "error", err)
+	if err := grpcClient.InitGrpcClient(ctx, *certManager, *configPath); err != nil {
+		slog.Error("Worker stopped", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("done?")
+	slog.Info("Worker shut down cleanly")
 }

@@ -1,0 +1,5 @@
+services:
+  sample-app:
+    build: .
+    image: sample-app:latest
+    container_name: sample-app

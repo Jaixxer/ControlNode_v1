@@ -19,10 +19,35 @@ rpc Echo(EchoRequest) returns (EchoResponse);
 message RegisterWorkerRequest{
     string name=1;
      sint32 heartbeat=2;
+    // Status updates the worker reports back for a deploy it was sent.
+    DeployStatus status=3;
+}
+// DeployCommand is pushed by the control plane down the worker's persistent
+// stream. A project is sent as a sequence of chunks so the control plane never
+// has to hold the whole archive on disk: chunk_index increments from 0 and the
+// final chunk sets last.
+message DeployCommand{
+    // Identifies this deploy so the worker's status updates can be matched to it.
+    string deploy_id=1;
+    string project=2;
+    // Human readable origin, e.g. "owner/repo@ref" or a local path.
+    string source=3;
+    bytes chunk=4;
+    uint32 chunk_index=5;
+    bool last=6;
+}
+// DeployStatus is the worker telling the control plane how a deploy went.
+message DeployStatus{
+    string deploy_id=1;
+    string project=2;
+    // One of: received, running, done, failed.
+    string state=3;
+    string message=4;
 }
 message RegisterWorkerResponse{
     string task=1;
     bool success=2;
+    DeployCommand deploy=3;
 }
 service RegisterWorker{
     rpc Register(stream RegisterWorkerRequest) returns (stream RegisterWorkerResponse);

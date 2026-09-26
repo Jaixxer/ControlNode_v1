@@ -25,6 +25,14 @@ type Config struct {
 		ServerKeyPath  string `yaml:"serverKeyPath"`
 		ClientCertPath string `yaml:"clientCertPath"`
 	} `yaml:"pki"`
+	Github struct {
+		ClientID       string `yaml:"clientId"`
+		AppID          int64  `yaml:"appId"`
+		AppSlug        string `yaml:"appSlug"`
+		PrivateKeyPath string `yaml:"privateKeyPath"`
+		WebhookSecret  string `yaml:"webhookSecret"`
+		WebhookURL     string `yaml:"webhookUrl"`
+	} `yaml:"github"`
 }
 
 func ParseConfig(path string) (*Config, error) {

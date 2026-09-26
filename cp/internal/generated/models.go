@@ -3,7 +3,7 @@
 package generated
 
 import (
-	"jaiveer/ControlPlane/cp/internal/db"
+	db "jaiveer/ControlPlane/cp/internal/db"
 
 	"gorm.io/cli/gorm/field"
 	"gorm.io/gorm"

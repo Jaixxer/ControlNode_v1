@@ -29,6 +29,12 @@ type CertificateManager struct {
 	workerKey  *rsa.PrivateKey
 }
 
+// Name is the worker name carried by the bootstrap token, used to identify this
+// worker to the control plane.
+func (s *CertificateManager) Name() string {
+	return s.name
+}
+
 func (s *CertificateManager) LoadBootstrapToken(tokenString string, configPath string) error {
 	tokenBytes, err := base64.StdEncoding.DecodeString(tokenString)
 	if err != nil {

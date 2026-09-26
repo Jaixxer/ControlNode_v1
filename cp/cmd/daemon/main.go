@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	database "jaiveer/ControlPlane/cp/internal/db"
 	"jaiveer/ControlPlane/cp/internal/pki"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -19,15 +21,39 @@ type ControlPlane struct {
 	CertManager pki.CertificateManager
 	Config      Config
 	DB          gorm.DB
+	Github      githubFlow
+	// Workers holds the workers attached over gRPC, so deploys can be pushed
+	// down to them.
+	Workers *workerRegistry
+	// Grpc is built at startup and merely started from Run, once the config
+	// (and therefore the TLS certs) has been loaded.
+	Grpc *GrpcServer
+	// WorkerStore tracks worker liveness in the database.
+	WorkerStore *workerStore
+
+	sweeperOnce sync.Once
 }
 
 // NOTE: Rn, daemon isnt maintaining a state of config in sense its not storing where the config is and as a resutl every restart would mean providing config path again
 func main() {
 	_ = os.RemoveAll("/tmp/cplane.sock")
-	controlPlane := ControlPlane{}
+	controlPlane := ControlPlane{Workers: newWorkerRegistry(), WorkerStore: newWorkerStore()}
+	controlPlane.Grpc = &GrpcServer{
+		Workers: controlPlane.Workers,
+		Deploys: newDeployTracker(),
+		Store:   controlPlane.WorkerStore,
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/run", controlPlane.Run)
 	mux.HandleFunc("/add-worker", controlPlane.addWorker)
+	mux.HandleFunc("/deploy", controlPlane.deploy)
+	mux.HandleFunc("/workers", controlPlane.listWorkers)
+	mux.HandleFunc("/github/login", controlPlane.githubLogin)
+	mux.HandleFunc("/github/status", controlPlane.githubStatus)
+	mux.HandleFunc("/github/repos", controlPlane.githubRepos)
+	mux.HandleFunc("/github/watch", controlPlane.githubWatch)
+	mux.HandleFunc("/github/webhook", controlPlane.githubWebhook)
+	mux.HandleFunc("/github/installation-token", controlPlane.githubInstallationToken)
 	listener, err := net.Listen("unix", "/tmp/cplane.sock")
 	os.Chmod("/tmp/cplane.sock", 0700)
 	if err != nil {
@@ -35,12 +61,8 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("listening", "address", listener.Addr())
-	go func() {
-		server := GrpcServer{}
-		go func() {
-			server.InitGrpcServer(&controlPlane.Config)
-		}()
-	}()
+	// The gRPC server starts from Run once the config (and thus the TLS certs)
+	// is loaded, so nothing is started here.
 	http.Serve(listener, mux)
 }
 
@@ -75,12 +97,20 @@ func (s *ControlPlane) Run(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 	s.DB = *db
-	err = db.AutoMigrate(&database.Deployments{}, &database.Workers{})
+	err = db.AutoMigrate(&database.Deployments{}, &database.Workers{}, &database.GithubCredential{}, &database.WatchedRepo{})
 	if err != nil {
 		fmt.Fprintln(w, "Error Migrating the schema to database: ", err)
 		flusher.Flush()
 	}
 	fmt.Fprintln(w, "Migration Successful!")
+
+	// Liveness tracking needs the database, so wire it up and start the sweeper
+	// the first time a config is loaded. sweeperOnce keeps repeat /run calls
+	// from spawning extra sweepers.
+	s.WorkerStore.setDB(&s.DB)
+	s.sweeperOnce.Do(func() {
+		go s.startWorkerSweeper(context.Background())
+	})
 	// Testing by creating a random worker
 	// err = gorm.G[database.Workers](db).Create(context.Background(), &database.Workers{})
 	// if err != nil {
@@ -106,8 +136,7 @@ func (s *ControlPlane) Run(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 	go func() {
-		server := GrpcServer{}
-		if err := server.InitGrpcServer(&s.Config); err != nil {
+		if err := s.Grpc.InitGrpcServer(&s.Config); err != nil {
 			slog.Error("Error Initialising GRPC Server", "error", err)
 			return
 		}

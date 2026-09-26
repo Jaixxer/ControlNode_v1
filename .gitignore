@@ -25,3 +25,12 @@ go.work.sum
 # env file
 .env
 
+# Local config: copy config.yaml.example and fill in your own values.
+# Holds secrets (webhook secret, GitHub App key path), so it stays local.
+config.yaml
+
+# Build outputs from `go build .` inside the command directories
+/cp/cmd/ctl/ctl
+/cp/cmd/daemon/daemon
+/workers/cmd/worker/worker
+

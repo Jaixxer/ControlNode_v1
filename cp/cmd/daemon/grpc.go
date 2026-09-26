@@ -5,10 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"fmt"
-	"io"
 	pb "jaiveer/ControlPlane/pkg/proto"
-	"log/slog"
 	"net"
 	"os"
 	"path"
@@ -20,33 +17,27 @@ import (
 type GrpcServer struct {
 	pb.UnimplementedEchoServiceServer
 	pb.UnimplementedRegisterWorkerServer
+	// Workers tracks the workers attached over the Register stream so deploys
+	// can be pushed to them.
+	Workers *workerRegistry
+	// Deploys records the status workers report back for each deploy.
+	Deploys *deployTracker
+	// Store persists worker liveness (last seen / online status).
+	Store *workerStore
 }
 
 func (s *GrpcServer) Echo(ctx context.Context, req *pb.EchoRequest) (*pb.EchoResponse, error) {
 	return &pb.EchoResponse{Message: "Wassup" + req.Message}, nil
 }
 
-// Register is a demo bidirectional stream: it keeps reading worker requests
-// and replies to each one with a task until the client closes the stream.
+// Register keeps a worker attached to the control plane. The worker's name comes
+// from its first message; after that the stream is used to push deploy commands
+// down to it and to observe heartbeats.
 func (s *GrpcServer) Register(stream grpc.BidiStreamingServer[pb.RegisterWorkerRequest, pb.RegisterWorkerResponse]) error {
-	for {
-		req, err := stream.Recv()
-		if err == io.EOF {
-			slog.Info("Worker closed the register stream")
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		slog.Info("Received register request", "name", req.Name, "heartbeat", req.Heartbeat)
-		resp := &pb.RegisterWorkerResponse{
-			Task:    fmt.Sprintf("Hello %s, you are registered with the control plane (heartbeat %d)", req.Name, req.Heartbeat),
-			Success: true,
-		}
-		if err := stream.Send(resp); err != nil {
-			return err
-		}
+	if s.Workers == nil {
+		return errors.New("worker registry is not initialised")
 	}
+	return s.registerStream(stream)
 }
 func (s *GrpcServer) InitGrpcServer(config *Config) error {
 	serverCert, err := tls.LoadX509KeyPair(path.Join(config.Pki.PkiRootPath, config.Pki.ServerCertPath), path.Join(config.Pki.PkiRootPath, config.Pki.ServerKeyPath))
@@ -72,9 +63,8 @@ func (s *GrpcServer) InitGrpcServer(config *Config) error {
 		grpc.Creds(creds),
 	}
 	server := grpc.NewServer(opts...)
-	grpcServer := &GrpcServer{}
-	pb.RegisterEchoServiceServer(server, grpcServer)
-	pb.RegisterRegisterWorkerServer(server, grpcServer)
+	pb.RegisterEchoServiceServer(server, s)
+	pb.RegisterRegisterWorkerServer(server, s)
 	lis, err := net.Listen("tcp", "localhost:50051")
 	if err != nil {
 		return err

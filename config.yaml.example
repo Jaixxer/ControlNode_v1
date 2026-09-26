@@ -1,15 +1,27 @@
-server:
-  host: "localhost"
-  port: 8080
+# Copy this file to config.yaml and fill in your own values.
+# config.yaml is gitignored, so secrets stay local.
 
 database:
-  path: "/home/jaiveer/Desktop/self_hosted_controlplane_bfd/dev.db"
-  user: "admin"
-  password: "securepassword"
+  # Path to the SQLite file. Created if it does not exist.
+  path: "./dev.db"
+
 pki:
-    pkiRootPath: "/tmp/ctl/"
-    caCertPath: "caCert.crt"
-    caKeyPath: "caKey.key"
-    serverKeyPath: "serverKey.key"
-    serverCertPath: "serverCert.crt"
-    clientCertPath: "/tmp/ctl/client_certs"
+  # Directory the certificates are written to and read from.
+  pkiRootPath: "/tmp/ctl/"
+  caCertPath: "caCert.crt"
+  caKeyPath: "caKey.key"
+  serverCertPath: "serverCert.crt"
+  serverKeyPath: "serverKey.key"
+
+github:
+  # OAuth app client ID, used by the device flow (`ctl auth github`).
+  clientId: ""
+  # The GitHub App ID, which is NOT the same as clientId above.
+  appId: 0
+  appSlug: ""
+  # Path to the GitHub App's PEM private key, used to sign app JWTs.
+  privateKeyPath: ""
+  # HMAC secret used to verify X-Hub-Signature-256 on incoming webhooks.
+  webhookSecret: ""
+  # Public URL GitHub delivers webhooks to.
+  webhookUrl: "https://your-public-host/github/webhook"
