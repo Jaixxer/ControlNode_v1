@@ -72,7 +72,7 @@ cp config.yaml.example config.yaml     # then edit the paths
 ./ctl add-worker --name w1
 #    → prints a `./worker --token ...` command; run it in another terminal
 
-# 6. Deploy something
+# 6. Deploy something — this serves a small web page, so it prints a URL
 ./ctl deploy ./workers/examples/sample-app
 ```
 
@@ -81,6 +81,10 @@ Watch it land:
 ```bash
 ./ctl workers
 ```
+
+`sample-app` is a dependency-free frontend that listens on a port, so a
+successful deploy ends with a URL you can open. `sample-server` is an even
+smaller version of the same thing if you want a minimal example.
 
 Full walkthrough, every flag, and the config reference:
 **[docs/commands.md](docs/commands.md)**.

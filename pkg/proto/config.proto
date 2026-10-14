@@ -21,6 +21,9 @@ message RegisterWorkerRequest{
      sint32 heartbeat=2;
     // Status updates the worker reports back for a deploy it was sent.
     DeployStatus status=3;
+    // Log lines streamed back while a deploy runs, so the operator can see the
+    // build output.
+    DeployLog log=4;
 }
 // DeployCommand is pushed by the control plane down the worker's persistent
 // stream. A project is sent as a sequence of chunks so the control plane never
@@ -35,14 +38,30 @@ message DeployCommand{
     bytes chunk=4;
     uint32 chunk_index=5;
     bool last=6;
+    // force rebuilds a project the worker has already deployed.
+    bool force=7;
+    // host_port pins the published port. 0 means let Docker pick a free one.
+    uint32 host_port=8;
+    // container_port is the port the app listens on inside the container. It is
+    // used when generating a compose file, and to work out the URL.
+    uint32 container_port=9;
+}
+// DeployLog is one line of deploy output, streamed to the control plane so it
+// can be shown to the operator.
+message DeployLog{
+    string deploy_id=1;
+    string project=2;
+    string line=3;
 }
 // DeployStatus is the worker telling the control plane how a deploy went.
 message DeployStatus{
     string deploy_id=1;
     string project=2;
-    // One of: received, running, done, failed.
+    // One of: received, exists, building, running, done, failed.
     string state=3;
     string message=4;
+    // url is where the deployed app can be reached, once it is running.
+    string url=5;
 }
 message RegisterWorkerResponse{
     string task=1;

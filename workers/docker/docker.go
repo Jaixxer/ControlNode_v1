@@ -40,6 +40,57 @@ func (c *Client) Close() error {
 	return c.cli.Close()
 }
 
+// ContainerHealth is the runtime state of one container.
+type ContainerHealth struct {
+	Name         string
+	Running      bool
+	RestartCount int
+	ExitCode     int
+}
+
+// ContainerHealth inspects containers by name.
+//
+// RestartCount is the interesting field: a compose file with a restart policy
+// will keep bringing a crashing app back up, so "is it running" can be true even
+// though the app never stays up. A non-zero restart count means it is
+// crash-looping.
+func (c *Client) ContainerHealth(ctx context.Context, names []string) ([]ContainerHealth, error) {
+	var out []ContainerHealth
+	var firstErr error
+
+	for _, name := range names {
+		info, err := c.cli.ContainerInspect(ctx, name)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("inspecting container %s: %w", name, err)
+			}
+			continue
+		}
+		h := ContainerHealth{Name: name, RestartCount: info.RestartCount}
+		if info.State != nil {
+			h.Running = info.State.Running
+			h.ExitCode = info.State.ExitCode
+		}
+		out = append(out, h)
+	}
+
+	if len(out) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return out, nil
+}
+
+// InspectContainers is the package level form, for callers that do not hold a
+// Client of their own.
+func InspectContainers(ctx context.Context, names []string) ([]ContainerHealth, error) {
+	c, err := New()
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	return c.ContainerHealth(ctx, names)
+}
+
 // Ping verifies that the Docker daemon is reachable.
 func (c *Client) Ping(ctx context.Context) error {
 	if _, err := c.cli.Ping(ctx); err != nil {

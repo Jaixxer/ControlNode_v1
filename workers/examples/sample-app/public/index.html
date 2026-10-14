@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ControlPlane sample app</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="card">
+      <header>
+        <span class="dot" id="status-dot" aria-hidden="true"></span>
+        <h1>ControlPlane sample app</h1>
+      </header>
+      <p class="lede">
+        This page is being served by a container that the control plane built and
+        started on a worker node. If you can read this, the deploy worked.
+      </p>
+
+      <dl class="facts">
+        <dt>Container host</dt>
+        <dd id="hostname">&mdash;</dd>
+        <dt>Uptime</dt>
+        <dd id="uptime">&mdash;</dd>
+        <dt>Node</dt>
+        <dd id="node">&mdash;</dd>
+        <dt>Platform</dt>
+        <dd id="platform">&mdash;</dd>
+      </dl>
+
+      <footer>
+        <button id="refresh" type="button">Refresh</button>
+        <span id="updated" class="muted"></span>
+      </footer>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

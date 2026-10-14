@@ -47,6 +47,7 @@ func main() {
 	mux.HandleFunc("/run", controlPlane.Run)
 	mux.HandleFunc("/add-worker", controlPlane.addWorker)
 	mux.HandleFunc("/deploy", controlPlane.deploy)
+	mux.HandleFunc("/deploy/status", controlPlane.deployStatus)
 	mux.HandleFunc("/workers", controlPlane.listWorkers)
 	mux.HandleFunc("/github/login", controlPlane.githubLogin)
 	mux.HandleFunc("/github/status", controlPlane.githubStatus)

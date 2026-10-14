@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -260,22 +261,52 @@ func main() {
 				slog.Error("Error parsing the workers", "error", err)
 				os.Exit(1)
 			}
+			force, err := cmd.Flags().GetBool("force")
+			if err != nil {
+				slog.Error("Error parsing force", "error", err)
+				os.Exit(1)
+			}
+			port, err := cmd.Flags().GetString("port")
+			if err != nil {
+				slog.Error("Error parsing the port", "error", err)
+				os.Exit(1)
+			}
+			containerPort, err := cmd.Flags().GetInt("container-port")
+			if err != nil {
+				slog.Error("Error parsing the container port", "error", err)
+				os.Exit(1)
+			}
+			detach, err := cmd.Flags().GetBool("detach")
+			if err != nil {
+				slog.Error("Error parsing detach", "error", err)
+				os.Exit(1)
+			}
 
 			params := url.Values{}
 			params.Set("path", absDir)
+			params.Set("containerPort", strconv.Itoa(containerPort))
 			if project != "" {
 				params.Set("project", project)
 			}
 			if worker != "" {
 				params.Set("workers", worker)
 			}
+			if force {
+				params.Set("force", "true")
+			}
+			if port != "" {
+				params.Set("port", port)
+			}
 
 			var res struct {
-				Status    string   `json:"status"`
-				Project   string   `json:"project"`
-				Workers   []string `json:"workers"`
-				Bytes     int      `json:"bytes"`
-				Generated []string `json:"generated"`
+				Status    string            `json:"status"`
+				DeployID  string            `json:"deploy_id"`
+				Project   string            `json:"project"`
+				Workers   []string          `json:"workers"`
+				Rejected  map[string]string `json:"rejected"`
+				Bytes     int               `json:"bytes"`
+				Generated []string          `json:"generated"`
+				Notes     []string          `json:"notes"`
 			}
 			if err := GetJSON("/deploy", params, &res); err != nil {
 				slog.Error("Deploy failed", "error", err)
@@ -285,15 +316,58 @@ func main() {
 			if len(res.Generated) > 0 {
 				fmt.Println("Generated missing files:", strings.Join(res.Generated, ", "))
 			}
+			for _, note := range res.Notes {
+				fmt.Println("Note:", note)
+			}
 			targets := res.Workers
 			if len(targets) == 0 {
 				targets = []string{"all connected workers"}
 			}
-			fmt.Printf("Deploying %s to %s (%d bytes)\n", res.Project, strings.Join(targets, ", "), res.Bytes)
+			fmt.Printf("Deploying %s to %s (%d bytes)\n\n", res.Project, strings.Join(targets, ", "), res.Bytes)
+
+			if detach {
+				fmt.Printf("Deploy %s started in the background (deploy id %s)\n", res.Project, res.DeployID)
+				fmt.Printf("Follow it with: ctl deploy-status %s\n", res.DeployID)
+				return
+			}
+
+			view, err := followDeploy(res.DeployID)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				if view == nil {
+					os.Exit(1)
+				}
+			}
+			if err := printDeploySummary(view); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
 		},
 	}
 	deployCmd.Flags().String("project", "", "Override the project name (defaults to the directory name)")
 	deployCmd.Flags().String("workers", "", "Comma separated worker names (defaults to all connected workers)")
+	deployCmd.Flags().Bool("force", false, "Rebuild the project even if a copy is already deployed on the worker")
+	deployCmd.Flags().String("port", "", "Pin the published host port (single worker only; defaults to a free port)")
+	deployCmd.Flags().Int("container-port", deploypkg.DefaultContainerPort, "Port the app listens on inside the container")
+	deployCmd.Flags().Bool("detach", false, "Return immediately instead of following the build output")
+	var deployStatusCmd = &cobra.Command{
+		Use:   "deploy-status <deploy_id>",
+		Short: "Follow a deploy that was started with --detach",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			view, err := followDeploy(args[0])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				if view == nil {
+					os.Exit(1)
+				}
+			}
+			if err := printDeploySummary(view); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+		},
+	}
 	var workersCmd = &cobra.Command{
 		Use:   "workers",
 		Short: "List worker nodes and their liveness",
@@ -330,6 +404,7 @@ func main() {
 	rootCmd.AddCommand(authCmd)
 	rootCmd.AddCommand(githubCmd)
 	rootCmd.AddCommand(deployCmd)
+	rootCmd.AddCommand(deployStatusCmd)
 	rootCmd.AddCommand(workersCmd)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println("Error Occured: ", err)

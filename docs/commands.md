@@ -172,17 +172,24 @@ w2               offline  closed    2026-09-24T09:58:12+05:30 1050s
 
 ### `ctl deploy <dir_path>`
 
-Packages a local project and deploys it to worker nodes.
+Packages a local project, ships it to worker nodes, and **follows the build**,
+printing the worker's output and the URL the app came up on.
 
 | Flag | Default | Description |
 |---|---|---|
 | `--project` | directory name | Name to deploy under. |
 | `--workers` | all connected | Comma-separated worker names. |
+| `--force` | `false` | Rebuild even if the project is already deployed on the worker. |
+| `--port` | *(a free port)* | Pin the published host port. Single worker only. |
+| `--container-port` | `3000` | Port the app listens on inside the container. |
+| `--detach` | `false` | Return immediately instead of following the build. |
 
 ```bash
 ./ctl deploy ./my-app
 ./ctl deploy ./my-app --workers w1,w2
 ./ctl deploy ./my-app --project api --workers w1
+./ctl deploy ./my-app --force
+./ctl deploy ./my-app --port 8080 --container-port 3000
 ```
 
 Only **node/js projects** are supported. The directory must contain a
@@ -192,16 +199,109 @@ Only **node/js projects** are supported. The directory must contain a
 Error: only node apps or js frontend apps are supported: expected a package.json or package-lock.json in the project directory
 ```
 
-What happens to the directory:
+A successful deploy looks like this:
+
+```
+Generated missing files: Dockerfile, docker-compose.yml
+Deploying sample-server to w1 (1030 bytes)
+
+[w1] received sample-server (/home/you/my-app)
+[w1] docker compose -p sample-server-w1 up --build -d
+[w1] #9 [4/5] RUN npm install
+[w1] #9 found 0 vulnerabilities
+[w1] Container sample-server-w1-app-1 Started
+[w1] listening on http://192.168.0.128:32791
+==> w1: done
+
+Deploy sample-server:
+  w1         done     http://192.168.0.128:32791
+
+  http://192.168.0.128:32791
+```
+
+Every line the build prints is streamed back, so a failure is visible rather
+than silent. A failed deploy exits non-zero and says why:
+
+```
+Deploy badbuild:
+  w1         FAILED   docker compose up in /tmp/worker-w1/projects/badbuild: exit status 1
+Error: deploy failed on 1 worker(s)
+```
+
+**Already deployed.** Deploying over an existing copy is refused, so you cannot
+clobber a running app by accident:
+
+```
+Deploy sample-server:
+  w1         rejected project "sample-server" is already deployed on worker "w1"; re-run with --force to rebuild it
+Error: deploy failed on 1 worker(s)
+```
+
+Add `--force` to rebuild. (GitHub push deploys always force, since a push means
+the running copy is stale.)
+
+**The URL.** The URL comes from the port the compose file publishes, read back
+from Docker once the containers are up. How that port gets declared depends on
+the project:
+
+| Project ships… | What happens |
+|---|---|
+| no compose | One is generated, publishing `--container-port` on a Docker-chosen host port. |
+| a compose with no `ports:` | A `docker-compose.override.yml` is generated next to it adding the port. Your compose is left untouched. |
+| a compose with `ports:` | Used as-is. `--port` and `--container-port` are **not** applied, and you get a note saying so. |
+
+Letting Docker choose the host port is what keeps several workers on one Docker
+host from colliding. Use `--port` to pin it instead, which requires targeting a
+single worker.
+
+Two details worth knowing:
+
+- **The generated compose is only merged because the worker passes it with
+  `-f`.** Compose does *not* auto-load an override when you pass `-f`
+  explicitly, so the worker lists both files.
+- **`--port` cannot override a compose that already publishes ports.** That is
+  deliberate — your compose is the source of truth — but it is reported rather
+  than silently ignored:
+
+```
+Note: docker-compose.yml publishes its own ports, so --port and --container-port were not applied to it
+```
+
+If a compose has several services, the port goes on the first one that has a
+`build:` section (the app), not a supporting service like a database. When there
+is more than one service you are told which one was chosen.
+
+**How the project is prepared:**
 
 1. `node_modules` and `.git` are excluded — dependencies are reinstalled inside
    the image.
-2. A `Dockerfile` and `docker-compose.yml` are generated **if the project has
-   none**, in a scratch copy, so your working directory is never modified. The
-   generated Dockerfile uses `node:22-alpine` and runs `npm start`.
-3. The result is streamed to the workers, which build and run it.
+2. A `Dockerfile` is generated **if the project has none**, in a scratch copy, so
+   your working directory is never modified. It uses `node:22-alpine`,
+   `npm start`, and `EXPOSE <container-port>`. If you ship your own, yours is
+   used unchanged.
+3. Containers run **detached** (`up --build -d`) with `restart: unless-stopped`,
+   so the deploy finishes and the app keeps running.
 
-If you already have a `Dockerfile`, yours is used and nothing is generated.
+**What counts as failure.** A build error fails the deploy. So does an app that
+will not stay up: because the restart policy would otherwise hide a crash loop,
+the container is watched for a few seconds after start and a restart is treated
+as failure, with the app's own logs attached:
+
+```
+Deploy crashapp:
+  w1         FAILED   the app did not stay up: crashapp-w1-app-1 (restarted 4 times, exit 0)
+```
+
+### `ctl deploy-status <deploy_id>`
+
+Follows a deploy that was started with `--detach`. Same output as `deploy`'s
+follow mode.
+
+```bash
+./ctl deploy ./my-app --detach
+# Deploy my-app started in the background (deploy id 594acb7f653371d1)
+./ctl deploy-status 594acb7f653371d1
+```
 
 ### `ctl auth github`
 
@@ -338,7 +438,8 @@ curl --unix-socket /tmp/cplane.sock http://local/workers
 |---|---|---|
 | GET | `/run?config=<path>` | Load a config and start gRPC. |
 | GET | `/add-worker?name=<name>` | Mint a worker cert, return its bootstrap token. |
-| GET | `/deploy?path=&project=&workers=` | Stage a local directory and stream it to workers. |
+| GET | `/deploy?path=&project=&workers=&force=&port=&containerPort=` | Stage a local directory, stream it to workers, return a `deploy_id`. |
+| GET | `/deploy/status?deploy_id=&since=` | Progress for a deploy: per-worker state and new log lines. |
 | GET | `/workers` | List workers with liveness. |
 | GET | `/github/login` | Start the device flow. |
 | GET | `/github/status` | Poll device-flow state. |
@@ -346,6 +447,10 @@ curl --unix-socket /tmp/cplane.sock http://local/workers
 | GET | `/github/watch?repo=&workers=&project=&branch=` | Register a webhook and remember the target workers. |
 | POST | `/github/webhook` | GitHub webhook receiver (signature verified). |
 | GET | `/github/installation-token?installation_id=` | Mint a GitHub App installation token. |
+
+`/deploy` returns as soon as the archive has been handed to the workers, because
+building can take minutes. Follow progress with `/deploy/status`, passing `since`
+as the `next` value from the previous response to get only new output.
 
 ---
 

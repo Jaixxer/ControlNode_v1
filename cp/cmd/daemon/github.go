@@ -358,7 +358,14 @@ func (s *ControlPlane) deployOnPush(repoFullName, ref, defaultBranch string) {
 		slog.Info("Deploying pushed repo",
 			"repo", repoFullName, "project", watched.Project, "ref", ref, "workers", targets)
 
-		result, err := s.deployRepo(ctx, watched.Project, repoFullName, ref, targets)
+		// A push means the running copy is stale, so pushes always rebuild
+		// rather than tripping the "already deployed" guard.
+		opts := DeployOptions{
+			Project:       watched.Project,
+			Force:         true,
+			ContainerPort: deploy.DefaultContainerPort,
+		}
+		result, err := s.deployRepo(ctx, opts, repoFullName, ref, targets)
 		if err != nil {
 			slog.Error("Push deploy failed", "repo", repoFullName, "error", err)
 			return

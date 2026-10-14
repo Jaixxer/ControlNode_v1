@@ -117,7 +117,10 @@ type RegisterWorkerRequest struct {
 	Name      string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Heartbeat int32                  `protobuf:"zigzag32,2,opt,name=heartbeat,proto3" json:"heartbeat,omitempty"`
 	// Status updates the worker reports back for a deploy it was sent.
-	Status        *DeployStatus `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	Status *DeployStatus `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	// Log lines streamed back while a deploy runs, so the operator can see the
+	// build output.
+	Log           *DeployLog `protobuf:"bytes,4,opt,name=log,proto3" json:"log,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -173,6 +176,13 @@ func (x *RegisterWorkerRequest) GetStatus() *DeployStatus {
 	return nil
 }
 
+func (x *RegisterWorkerRequest) GetLog() *DeployLog {
+	if x != nil {
+		return x.Log
+	}
+	return nil
+}
+
 // DeployCommand is pushed by the control plane down the worker's persistent
 // stream. A project is sent as a sequence of chunks so the control plane never
 // has to hold the whole archive on disk: chunk_index increments from 0 and the
@@ -183,10 +193,17 @@ type DeployCommand struct {
 	DeployId string `protobuf:"bytes,1,opt,name=deploy_id,json=deployId,proto3" json:"deploy_id,omitempty"`
 	Project  string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	// Human readable origin, e.g. "owner/repo@ref" or a local path.
-	Source        string `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
-	Chunk         []byte `protobuf:"bytes,4,opt,name=chunk,proto3" json:"chunk,omitempty"`
-	ChunkIndex    uint32 `protobuf:"varint,5,opt,name=chunk_index,json=chunkIndex,proto3" json:"chunk_index,omitempty"`
-	Last          bool   `protobuf:"varint,6,opt,name=last,proto3" json:"last,omitempty"`
+	Source     string `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	Chunk      []byte `protobuf:"bytes,4,opt,name=chunk,proto3" json:"chunk,omitempty"`
+	ChunkIndex uint32 `protobuf:"varint,5,opt,name=chunk_index,json=chunkIndex,proto3" json:"chunk_index,omitempty"`
+	Last       bool   `protobuf:"varint,6,opt,name=last,proto3" json:"last,omitempty"`
+	// force rebuilds a project the worker has already deployed.
+	Force bool `protobuf:"varint,7,opt,name=force,proto3" json:"force,omitempty"`
+	// host_port pins the published port. 0 means let Docker pick a free one.
+	HostPort uint32 `protobuf:"varint,8,opt,name=host_port,json=hostPort,proto3" json:"host_port,omitempty"`
+	// container_port is the port the app listens on inside the container. It is
+	// used when generating a compose file, and to work out the URL.
+	ContainerPort uint32 `protobuf:"varint,9,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -263,21 +280,106 @@ func (x *DeployCommand) GetLast() bool {
 	return false
 }
 
+func (x *DeployCommand) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
+func (x *DeployCommand) GetHostPort() uint32 {
+	if x != nil {
+		return x.HostPort
+	}
+	return 0
+}
+
+func (x *DeployCommand) GetContainerPort() uint32 {
+	if x != nil {
+		return x.ContainerPort
+	}
+	return 0
+}
+
+// DeployLog is one line of deploy output, streamed to the control plane so it
+// can be shown to the operator.
+type DeployLog struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DeployId      string                 `protobuf:"bytes,1,opt,name=deploy_id,json=deployId,proto3" json:"deploy_id,omitempty"`
+	Project       string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
+	Line          string                 `protobuf:"bytes,3,opt,name=line,proto3" json:"line,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeployLog) Reset() {
+	*x = DeployLog{}
+	mi := &file_pkg_proto_config_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeployLog) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeployLog) ProtoMessage() {}
+
+func (x *DeployLog) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_proto_config_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeployLog.ProtoReflect.Descriptor instead.
+func (*DeployLog) Descriptor() ([]byte, []int) {
+	return file_pkg_proto_config_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *DeployLog) GetDeployId() string {
+	if x != nil {
+		return x.DeployId
+	}
+	return ""
+}
+
+func (x *DeployLog) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *DeployLog) GetLine() string {
+	if x != nil {
+		return x.Line
+	}
+	return ""
+}
+
 // DeployStatus is the worker telling the control plane how a deploy went.
 type DeployStatus struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	DeployId string                 `protobuf:"bytes,1,opt,name=deploy_id,json=deployId,proto3" json:"deploy_id,omitempty"`
 	Project  string                 `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
-	// One of: received, running, done, failed.
-	State         string `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
-	Message       string `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	// One of: received, exists, building, running, done, failed.
+	State   string `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"`
+	Message string `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	// url is where the deployed app can be reached, once it is running.
+	Url           string `protobuf:"bytes,5,opt,name=url,proto3" json:"url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeployStatus) Reset() {
 	*x = DeployStatus{}
-	mi := &file_pkg_proto_config_proto_msgTypes[4]
+	mi := &file_pkg_proto_config_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -289,7 +391,7 @@ func (x *DeployStatus) String() string {
 func (*DeployStatus) ProtoMessage() {}
 
 func (x *DeployStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_proto_config_proto_msgTypes[4]
+	mi := &file_pkg_proto_config_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -302,7 +404,7 @@ func (x *DeployStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeployStatus.ProtoReflect.Descriptor instead.
 func (*DeployStatus) Descriptor() ([]byte, []int) {
-	return file_pkg_proto_config_proto_rawDescGZIP(), []int{4}
+	return file_pkg_proto_config_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *DeployStatus) GetDeployId() string {
@@ -333,6 +435,13 @@ func (x *DeployStatus) GetMessage() string {
 	return ""
 }
 
+func (x *DeployStatus) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
 type RegisterWorkerResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Task          string                 `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
@@ -344,7 +453,7 @@ type RegisterWorkerResponse struct {
 
 func (x *RegisterWorkerResponse) Reset() {
 	*x = RegisterWorkerResponse{}
-	mi := &file_pkg_proto_config_proto_msgTypes[5]
+	mi := &file_pkg_proto_config_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -356,7 +465,7 @@ func (x *RegisterWorkerResponse) String() string {
 func (*RegisterWorkerResponse) ProtoMessage() {}
 
 func (x *RegisterWorkerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_proto_config_proto_msgTypes[5]
+	mi := &file_pkg_proto_config_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -369,7 +478,7 @@ func (x *RegisterWorkerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterWorkerResponse.ProtoReflect.Descriptor instead.
 func (*RegisterWorkerResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_proto_config_proto_rawDescGZIP(), []int{5}
+	return file_pkg_proto_config_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RegisterWorkerResponse) GetTask() string {
@@ -401,11 +510,12 @@ const file_pkg_proto_config_proto_rawDesc = "" +
 	"\vEchoRequest\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"(\n" +
 	"\fEchoResponse\x12\x18\n" +
-	"\amessage\x18\x01 \x01(\tR\amessage\"u\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\"\x98\x01\n" +
 	"\x15RegisterWorkerRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\theartbeat\x18\x02 \x01(\x11R\theartbeat\x12*\n" +
-	"\x06status\x18\x03 \x01(\v2\x12.echo.DeployStatusR\x06status\"\xa9\x01\n" +
+	"\x06status\x18\x03 \x01(\v2\x12.echo.DeployStatusR\x06status\x12!\n" +
+	"\x03log\x18\x04 \x01(\v2\x0f.echo.DeployLogR\x03log\"\x83\x02\n" +
 	"\rDeployCommand\x12\x1b\n" +
 	"\tdeploy_id\x18\x01 \x01(\tR\bdeployId\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x16\n" +
@@ -413,12 +523,20 @@ const file_pkg_proto_config_proto_rawDesc = "" +
 	"\x05chunk\x18\x04 \x01(\fR\x05chunk\x12\x1f\n" +
 	"\vchunk_index\x18\x05 \x01(\rR\n" +
 	"chunkIndex\x12\x12\n" +
-	"\x04last\x18\x06 \x01(\bR\x04last\"u\n" +
+	"\x04last\x18\x06 \x01(\bR\x04last\x12\x14\n" +
+	"\x05force\x18\a \x01(\bR\x05force\x12\x1b\n" +
+	"\thost_port\x18\b \x01(\rR\bhostPort\x12%\n" +
+	"\x0econtainer_port\x18\t \x01(\rR\rcontainerPort\"V\n" +
+	"\tDeployLog\x12\x1b\n" +
+	"\tdeploy_id\x18\x01 \x01(\tR\bdeployId\x12\x18\n" +
+	"\aproject\x18\x02 \x01(\tR\aproject\x12\x12\n" +
+	"\x04line\x18\x03 \x01(\tR\x04line\"\x87\x01\n" +
 	"\fDeployStatus\x12\x1b\n" +
 	"\tdeploy_id\x18\x01 \x01(\tR\bdeployId\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x14\n" +
 	"\x05state\x18\x03 \x01(\tR\x05state\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage\"s\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x12\x10\n" +
+	"\x03url\x18\x05 \x01(\tR\x03url\"s\n" +
 	"\x16RegisterWorkerResponse\x12\x12\n" +
 	"\x04task\x18\x01 \x01(\tR\x04task\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12+\n" +
@@ -440,27 +558,29 @@ func file_pkg_proto_config_proto_rawDescGZIP() []byte {
 	return file_pkg_proto_config_proto_rawDescData
 }
 
-var file_pkg_proto_config_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_pkg_proto_config_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_pkg_proto_config_proto_goTypes = []any{
 	(*EchoRequest)(nil),            // 0: echo.EchoRequest
 	(*EchoResponse)(nil),           // 1: echo.EchoResponse
 	(*RegisterWorkerRequest)(nil),  // 2: echo.RegisterWorkerRequest
 	(*DeployCommand)(nil),          // 3: echo.DeployCommand
-	(*DeployStatus)(nil),           // 4: echo.DeployStatus
-	(*RegisterWorkerResponse)(nil), // 5: echo.RegisterWorkerResponse
+	(*DeployLog)(nil),              // 4: echo.DeployLog
+	(*DeployStatus)(nil),           // 5: echo.DeployStatus
+	(*RegisterWorkerResponse)(nil), // 6: echo.RegisterWorkerResponse
 }
 var file_pkg_proto_config_proto_depIdxs = []int32{
-	4, // 0: echo.RegisterWorkerRequest.status:type_name -> echo.DeployStatus
-	3, // 1: echo.RegisterWorkerResponse.deploy:type_name -> echo.DeployCommand
-	0, // 2: echo.EchoService.Echo:input_type -> echo.EchoRequest
-	2, // 3: echo.RegisterWorker.Register:input_type -> echo.RegisterWorkerRequest
-	1, // 4: echo.EchoService.Echo:output_type -> echo.EchoResponse
-	5, // 5: echo.RegisterWorker.Register:output_type -> echo.RegisterWorkerResponse
-	4, // [4:6] is the sub-list for method output_type
-	2, // [2:4] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	5, // 0: echo.RegisterWorkerRequest.status:type_name -> echo.DeployStatus
+	4, // 1: echo.RegisterWorkerRequest.log:type_name -> echo.DeployLog
+	3, // 2: echo.RegisterWorkerResponse.deploy:type_name -> echo.DeployCommand
+	0, // 3: echo.EchoService.Echo:input_type -> echo.EchoRequest
+	2, // 4: echo.RegisterWorker.Register:input_type -> echo.RegisterWorkerRequest
+	1, // 5: echo.EchoService.Echo:output_type -> echo.EchoResponse
+	6, // 6: echo.RegisterWorker.Register:output_type -> echo.RegisterWorkerResponse
+	5, // [5:7] is the sub-list for method output_type
+	3, // [3:5] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_pkg_proto_config_proto_init() }
@@ -474,7 +594,7 @@ func file_pkg_proto_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_proto_config_proto_rawDesc), len(file_pkg_proto_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

@@ -2,4 +2,10 @@ services:
   sample-app:
     build: .
     image: sample-app:latest
-    container_name: sample-app
+    ports:
+      # Publishes container port 3000 on a free host port, which Docker picks.
+      # That is what lets the same project run on several workers sharing one
+      # Docker host without a port clash, and it is how the deploy works out
+      # the URL. Use "8080:3000" instead to pin the host port.
+      - "3000"
+    restart: unless-stopped

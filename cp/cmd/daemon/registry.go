@@ -123,37 +123,282 @@ func (r *workerRegistry) namesLocked() []string {
 	return out
 }
 
-// deployTracker remembers the latest state each worker reported for a deploy so
-// callers can see how it went.
+// maxLogLines caps how much deploy output is retained per deploy. A noisy build
+// should not be able to grow the daemon's memory without bound; the oldest lines
+// are dropped once the cap is reached.
+const maxLogLines = 2000
+
+// maxTrackedDeploys caps how many deploys are remembered, so the tracker cannot
+// leak. Old attempts are pruned when a new deploy starts.
+const maxTrackedDeploys = 200
+
+// workerDeployState is how one worker is getting on with a deploy.
+type workerDeployState struct {
+	State   string
+	Message string
+	URL     string
+	Updated time.Time
+}
+
+// deployLogLine is one line of output attributed to the worker that produced it.
+type deployLogLine struct {
+	Worker string
+	Line   string
+}
+
+// deployAttempt is one deploy, fanned out across a set of workers.
 //
-// Statuses are held as pointers because protobuf messages embed a mutex and must
-// not be copied.
+// State is tracked per worker rather than per deploy: with a fan-out to several
+// workers one can fail while another succeeds, and reporting only the last
+// status to arrive would hide that.
+type deployAttempt struct {
+	DeployID string
+	Project  string
+	Source   string
+	Targets  []string
+	States   map[string]*workerDeployState
+	Logs     []deployLogLine
+	Created  time.Time
+}
+
+// terminalStates are the states that mean a worker is finished with a deploy.
+var terminalStates = map[string]bool{
+	"done":   true,
+	"failed": true,
+	"exists": true,
+}
+
+// deployTracker records the progress of deploys so the CLI can follow them.
 type deployTracker struct {
-	mu     sync.Mutex
-	states map[string]*pb.DeployStatus
+	mu       sync.Mutex
+	attempts map[string]*deployAttempt
 }
 
 func newDeployTracker() *deployTracker {
-	return &deployTracker{states: make(map[string]*pb.DeployStatus)}
+	return &deployTracker{attempts: make(map[string]*deployAttempt)}
 }
 
-func (t *deployTracker) set(s *pb.DeployStatus) {
+// create registers a new deploy and prunes old attempts.
+func (t *deployTracker) create(deployID, project, source string, targets []string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.states[s.GetDeployId()] = s
+
+	t.pruneLocked()
+
+	states := make(map[string]*workerDeployState, len(targets))
+	for _, name := range targets {
+		states[name] = &workerDeployState{State: "pending", Updated: time.Now()}
+	}
+	t.attempts[deployID] = &deployAttempt{
+		DeployID: deployID,
+		Project:  project,
+		Source:   source,
+		Targets:  targets,
+		States:   states,
+		Created:  time.Now(),
+	}
 }
 
-func (t *deployTracker) get(deployID string) (*pb.DeployStatus, bool) {
+// pruneLocked drops attempts older than an hour, and the oldest ones beyond the
+// cap. It assumes the lock is held.
+func (t *deployTracker) pruneLocked() {
+	cutoff := time.Now().Add(-time.Hour)
+	for id, a := range t.attempts {
+		if a.Created.Before(cutoff) {
+			delete(t.attempts, id)
+		}
+	}
+	for len(t.attempts) >= maxTrackedDeploys {
+		var oldestID string
+		var oldest time.Time
+		for id, a := range t.attempts {
+			if oldestID == "" || a.Created.Before(oldest) {
+				oldestID, oldest = id, a.Created
+			}
+		}
+		delete(t.attempts, oldestID)
+	}
+}
+
+// setStatus records a worker's state for its deploy.
+func (t *deployTracker) setStatus(worker string, s *pb.DeployStatus) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	s, ok := t.states[deployID]
-	return s, ok
+
+	a, ok := t.attempts[s.GetDeployId()]
+	if !ok {
+		return
+	}
+	st, ok := a.States[worker]
+	if !ok {
+		st = &workerDeployState{}
+		a.States[worker] = st
+	}
+	st.State = s.GetState()
+	st.Message = s.GetMessage()
+	if s.GetUrl() != "" {
+		st.URL = s.GetUrl()
+	}
+	st.Updated = time.Now()
+}
+
+// addLog appends a line of deploy output.
+func (t *deployTracker) addLog(worker string, l *pb.DeployLog) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	a, ok := t.attempts[l.GetDeployId()]
+	if !ok {
+		return
+	}
+	a.Logs = append(a.Logs, deployLogLine{Worker: worker, Line: l.GetLine()})
+	if len(a.Logs) > maxLogLines {
+		a.Logs = a.Logs[len(a.Logs)-maxLogLines:]
+	}
+}
+
+// failedTargets returns the workers that will never accept the archive being
+// streamed, so the fan-out can stop wasting bandwidth on them.
+func (t *deployTracker) failedTargets(deployID string) map[string]bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	a, ok := t.attempts[deployID]
+	if !ok {
+		return nil
+	}
+	out := map[string]bool{}
+	for name, st := range a.States {
+		if st.State == "exists" || st.State == "failed" {
+			out[name] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// rejectedWorkers returns the workers that refused this deploy, with the message
+// each gave. It is what the API reports back so the operator learns they need
+// --force.
+func (t *deployTracker) rejectedWorkers(deployID string) map[string]string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	a, ok := t.attempts[deployID]
+	if !ok {
+		return nil
+	}
+	out := map[string]string{}
+	for name, st := range a.States {
+		if st.State == "exists" {
+			out[name] = st.Message
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// deployWorkerView is one worker's state, as reported to the CLI.
+type deployWorkerView struct {
+	Name    string `json:"name"`
+	State   string `json:"state"`
+	Message string `json:"message,omitempty"`
+	URL     string `json:"url,omitempty"`
+}
+
+// deployLogView is one line of output, as reported to the CLI.
+type deployLogView struct {
+	Worker string `json:"worker"`
+	Line   string `json:"line"`
+}
+
+// deployView is the snapshot the CLI polls.
+type deployView struct {
+	DeployID string             `json:"deploy_id"`
+	Project  string             `json:"project"`
+	Source   string             `json:"source"`
+	Done     bool               `json:"done"`
+	Workers  []deployWorkerView `json:"workers"`
+	Logs     []deployLogView    `json:"logs"`
+	// Next is the index to pass as ?since= to get only newer log lines.
+	Next int `json:"next"`
+}
+
+// view returns a snapshot of a deploy, including log lines from index since on.
+func (t *deployTracker) view(deployID string, since int) (*deployView, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	a, ok := t.attempts[deployID]
+	if !ok {
+		return nil, false
+	}
+
+	if since < 0 {
+		since = 0
+	}
+	// Clamp before sizing the slice: a caller asking for an offset past the end
+	// must not produce a negative capacity.
+	start := min(since, len(a.Logs))
+	logs := make([]deployLogView, 0, len(a.Logs)-start)
+	for _, l := range a.Logs[start:] {
+		logs = append(logs, deployLogView{Worker: l.Worker, Line: l.Line})
+	}
+
+	workers := make([]deployWorkerView, 0, len(a.Targets))
+	done := len(a.Targets) > 0
+	for _, name := range a.Targets {
+		st, ok := a.States[name]
+		if !ok {
+			workers = append(workers, deployWorkerView{Name: name, State: "pending"})
+			done = false
+			continue
+		}
+		workers = append(workers, deployWorkerView{
+			Name:    name,
+			State:   st.State,
+			Message: st.Message,
+			URL:     st.URL,
+		})
+		if !terminalStates[st.State] {
+			done = false
+		}
+	}
+
+	return &deployView{
+		DeployID: a.DeployID,
+		Project:  a.Project,
+		Source:   a.Source,
+		Done:     done,
+		Workers:  workers,
+		Logs:     logs,
+		Next:     len(a.Logs),
+	}, true
 }
 
 // DeployResult reports which workers accepted a deploy and which did not.
 type DeployResult struct {
 	Sent   []string
 	Failed map[string]error
+	// Rejected names workers that refused the deploy because the project already
+	// exists there and --force was not given.
+	Rejected map[string]string
+}
+
+// DeployOptions describes what is being deployed and how.
+type DeployOptions struct {
+	Project string
+	Source  string
+	// Force rebuilds a project that is already deployed on the worker.
+	Force bool
+	// HostPort pins the published port; 0 lets Docker allocate one per worker.
+	HostPort uint32
+	// ContainerPort is the port the app listens on inside the container.
+	ContainerPort uint32
 }
 
 // DeployStream streams a tar.gz from r down to the given workers, or to every
@@ -161,20 +406,30 @@ type DeployResult struct {
 //
 // The archive is read once and fanned out chunk by chunk, so the control plane
 // never buffers the whole project and never needs it on disk. A worker that
-// cannot keep up is dropped from the fan-out rather than stalling the others.
-func (s *GrpcServer) DeployStream(deployID, project, source string, r io.Reader, names []string) (*DeployResult, error) {
+// cannot keep up, or that refuses the deploy because the project is already
+// there, is dropped from the fan-out rather than stalling the others.
+func (s *GrpcServer) DeployStream(deployID string, opts DeployOptions, r io.Reader, names []string) (*DeployResult, error) {
 	targets, err := s.Workers.targets(names)
 	if err != nil && len(targets) == 0 {
 		return nil, err
 	}
 
-	result := &DeployResult{Failed: map[string]error{}}
+	result := &DeployResult{Failed: map[string]error{}, Rejected: map[string]string{}}
 	if err != nil {
 		// Some requested workers are not connected; carry on with the ones that
 		// are, but surface the problem.
 		slog.Warn("Deploying to a partial set of workers", "error", err)
 		result.Failed["_requested"] = err
 	}
+
+	// Record the attempt up front so status and log updates that arrive during
+	// the stream have somewhere to land.
+	targetNames := make([]string, 0, len(targets))
+	for _, conn := range targets {
+		targetNames = append(targetNames, conn.name)
+	}
+	sort.Strings(targetNames)
+	s.Deploys.create(deployID, opts.Project, opts.Source, targetNames)
 
 	alive := make([]*workerConn, len(targets))
 	copy(alive, targets)
@@ -189,13 +444,23 @@ func (s *GrpcServer) DeployStream(deployID, project, source string, r io.Reader,
 			copy(chunk, buf[:n])
 
 			alive = s.fanOutChunk(alive, result, &pb.DeployCommand{
-				DeployId:   deployID,
-				Project:    project,
-				Source:     source,
-				Chunk:      chunk,
-				ChunkIndex: index,
+				DeployId:      deployID,
+				Project:       opts.Project,
+				Source:        opts.Source,
+				Chunk:         chunk,
+				ChunkIndex:    index,
+				Force:         opts.Force,
+				HostPort:      opts.HostPort,
+				ContainerPort: opts.ContainerPort,
 			})
 			index++
+
+			// Stop wasting bandwidth on workers that already refused this
+			// deploy: the "exists" check happens on the first chunk, so this
+			// bites within a chunk or two for a large archive.
+			if rejected := s.Deploys.failedTargets(deployID); len(rejected) > 0 {
+				alive = dropConnections(alive, rejected, result)
+			}
 		}
 
 		if readErr == io.EOF {
@@ -208,11 +473,14 @@ func (s *GrpcServer) DeployStream(deployID, project, source string, r io.Reader,
 
 	// A final empty chunk marks the end of the deploy.
 	s.fanOutChunk(alive, result, &pb.DeployCommand{
-		DeployId:   deployID,
-		Project:    project,
-		Source:     source,
-		ChunkIndex: index,
-		Last:       true,
+		DeployId:      deployID,
+		Project:       opts.Project,
+		Source:        opts.Source,
+		ChunkIndex:    index,
+		Last:          true,
+		Force:         opts.Force,
+		HostPort:      opts.HostPort,
+		ContainerPort: opts.ContainerPort,
 	})
 
 	for _, conn := range targets {
@@ -222,10 +490,29 @@ func (s *GrpcServer) DeployStream(deployID, project, source string, r io.Reader,
 	}
 	sort.Strings(result.Sent)
 
-	if len(result.Sent) == 0 {
+	// Surface the refusals with the worker's own explanation.
+	for name, reason := range s.Deploys.rejectedWorkers(deployID) {
+		result.Rejected[name] = reason
+	}
+
+	if len(result.Sent) == 0 && len(result.Rejected) == 0 {
 		return result, fmt.Errorf("no worker accepted the deploy")
 	}
 	return result, nil
+}
+
+// dropConnections removes workers from the fan-out and records why.
+func dropConnections(conns []*workerConn, drop map[string]bool, result *DeployResult) []*workerConn {
+	remaining := conns[:0]
+	for _, conn := range conns {
+		if drop[conn.name] {
+			slog.Warn("Dropping worker from the fan-out", "worker", conn.name)
+			result.Failed[conn.name] = errors.New("worker refused the deploy")
+			continue
+		}
+		remaining = append(remaining, conn)
+	}
+	return remaining
 }
 
 // fanOutChunk sends one deploy chunk to every live worker, dropping any that
@@ -283,7 +570,13 @@ func (s *GrpcServer) registerStream(stream grpc.BidiStreamingServer[pb.RegisterW
 					"state", status.GetState(),
 					"message", status.GetMessage(),
 				)
-				s.Deploys.set(status)
+				s.Deploys.setStatus(conn.name, status)
+				continue
+			}
+			// Deploy output is buffered for the CLI to read; logging every line
+			// here as well would bury the daemon's own logs.
+			if line := req.GetLog(); line != nil {
+				s.Deploys.addLog(conn.name, line)
 				continue
 			}
 			// Heartbeats only prove liveness; log them at debug level so the

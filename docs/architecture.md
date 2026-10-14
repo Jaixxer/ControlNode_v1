@@ -91,7 +91,64 @@ sequenceDiagram
 | worker → daemon | `RegisterWorkerRequest.name` | Identity, sent first. Taken from the bootstrap token. |
 | worker → daemon | `RegisterWorkerRequest.heartbeat` | Liveness. |
 | worker → daemon | `RegisterWorkerRequest.status` | `DeployStatus` for a deploy. |
+| worker → daemon | `RegisterWorkerRequest.log` | `DeployLog`, one line of build output. |
 | daemon → worker | `RegisterWorkerResponse.deploy` | `DeployCommand`, one chunk per message. |
+
+**Watching a deploy.** `/deploy` returns a `deploy_id` as soon as the archive has
+been handed over, because building can take minutes. The CLI then polls
+`/deploy/status`, and the daemon answers from `deployTracker`, which keeps a
+per-worker state plus a bounded buffer of output lines for each deploy:
+
+```mermaid
+sequenceDiagram
+    participant C as ctl
+    participant D as daemon
+    participant W as worker
+    C->>D: GET /deploy
+    D->>W: DeployCommand chunks
+    D-->>C: deploy_id
+    loop until done
+        C->>D: GET /deploy/status?since=N
+        D-->>C: worker states + new log lines
+    end
+    W->>D: DeployStatus{state=done, url=...}
+```
+
+State is tracked **per worker**, not per deploy: with a fan-out one worker can
+fail while another succeeds, and keeping only the last status to arrive would
+hide that. Logging is bounded (`maxLogLines`) so a noisy build cannot grow the
+daemon's memory without limit, and the worker side drops lines rather than
+blocking the build when the stream cannot keep up.
+
+**URLs.** A deploy reports where the app came up. Ports are declared in one of
+three ways, and the host port is then read back from Docker rather than guessed,
+because leaving it to Docker is what keeps several workers on one host from
+colliding:
+
+| Project ships… | Port declared by |
+|---|---|
+| no compose | A generated compose. |
+| a compose with no `ports:` | A generated `docker-compose.override.yml`. |
+| a compose with `ports:` | The project. `--port` is refused with an explanatory note. |
+
+The override only takes effect because the worker passes it explicitly with
+`-f`: when compose is given `-f` it uses exactly the files listed and does not
+pick up an override on its own. The override targets the first service that has
+a `build:` section, so a sidecar database does not get the app's port, and says
+which service it chose whenever the compose has more than one.
+
+**Declining a repeat deploy.** The worker refuses a project that is already in
+its projects directory unless the command carries `force`, so a running app
+cannot be clobbered by accident. The check happens on the first chunk — the
+earliest point the project name is known — and the daemon drops that worker from
+the fan-out as soon as the refusal arrives, so a large archive is not streamed
+to a worker that has already said no.
+
+**Detached containers.** `docker compose up --build -d` is used rather than
+foreground mode, so a deploy completes and reports a URL instead of blocking
+until the app exits. Since a restart policy would disguise a crash loop as a
+running container, the worker watches the containers briefly after start and
+treats a restart as a failed deploy, attaching the app's own logs.
 
 **Why chunked.** `DeployCommand` carries `bytes chunk` plus `chunk_index` and
 `last`, so a project is streamed in 512KB pieces rather than one giant message.
